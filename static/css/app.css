@@ -194,3 +194,39 @@ table tr.invalid td { background: #fff5f5; }
 .status.info { background: #d1ecf1; color: #0c5460; }
 
 .hidden { display: none; }
+
+.env-banner {
+    padding: 8px 24px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.env-banner .env-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.env-banner .env-detail { color: rgba(0,0,0,0.65); }
+.env-banner .env-warning {
+    color: #c33;
+    font-weight: 600;
+    margin-left: 8px;
+}
+.env-banner.env-sandbox { background: #e7f1ff; color: #1c4eb8; }
+.env-banner.env-sandbox .env-dot { background: #1c4eb8; }
+.env-banner.env-production {
+    background: #ffe9e9;
+    color: #8a1d1d;
+    border-bottom-color: #c33;
+}
+.env-banner.env-production .env-dot { background: #c33; }
+.env-banner.env-production .env-detail { color: #8a1d1d; }
+
+.env-switch button[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}

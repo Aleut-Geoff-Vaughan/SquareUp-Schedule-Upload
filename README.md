@@ -96,6 +96,21 @@ docker-compose down
 
 ---
 
+## Running Tests
+
+The repo ships with a `pytest` suite covering auth, settings CRUD, admin gating, and the upload → verify → process flow (Square API mocked):
+
+```bash
+pip install -r requirements.txt
+pytest -v
+```
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the same suite on every push and PR against Python 3.10 and 3.11.
+
+A `sample_schedule.csv` is included in the repo root for manual testing.
+
+---
+
 ## 🔧 SETUP INSTRUCTIONS
 
 ### Step 1: Get Your Square IDs
