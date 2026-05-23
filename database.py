@@ -113,7 +113,16 @@ class Database:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-    
+
+            # Pending uploads (server-side staging so CSVs don't have to fit in a session cookie)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_uploads (
+                    user_id INTEGER PRIMARY KEY,
+                    csv_data TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
     # ==================== USERS ====================
     
     def get_user(self, username):
@@ -365,3 +374,27 @@ class Database:
             cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
             row = cursor.fetchone()
             return row[0] if row else None
+
+    # ==================== PENDING UPLOADS ====================
+
+    def set_pending_upload(self, user_id, csv_rows):
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT OR REPLACE INTO pending_uploads (user_id, csv_data, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+                (user_id, json.dumps(csv_rows))
+            )
+
+    def get_pending_upload(self, user_id):
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT csv_data FROM pending_uploads WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            return json.loads(row[0]) if row else None
+
+    def clear_pending_upload(self, user_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM pending_uploads WHERE user_id = ?', (user_id,))

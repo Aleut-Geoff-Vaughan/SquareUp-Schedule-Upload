@@ -24,6 +24,7 @@ CORS(app)
 
 # Initialize database and Square API
 db = Database()
+db.init_db()
 square = SquareAPI()
 
 # Ensure uploads directory exists
@@ -184,18 +185,21 @@ def upload():
         try:
             # Read CSV
             stream = file.stream.read().decode("UTF8")
-            csv_data = list(csv.DictReader(stream.splitlines()))
-            
-            # Validate CSV
+            reader = csv.DictReader(stream.splitlines())
+            csv_data = list(reader)
+
+            if not csv_data:
+                return jsonify({'error': 'CSV is empty or has no data rows'}), 400
+
             required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time', 'timezone_offset']
-            for col in required_columns:
-                if col not in csv_data[0]:
-                    return jsonify({'error': f'Missing required column: {col}'}), 400
-            
-            # Store in session for verification
-            session['pending_csv'] = csv_data
+            header = reader.fieldnames or []
+            missing = [c for c in required_columns if c not in header]
+            if missing:
+                return jsonify({'error': f"Missing required column(s): {', '.join(missing)}"}), 400
+
+            db.set_pending_upload(session['user_id'], csv_data)
             session['upload_timestamp'] = datetime.now().isoformat()
-            
+
             return jsonify({
                 'success': True,
                 'message': f'{len(csv_data)} rows ready for verification',
@@ -210,10 +214,9 @@ def upload():
 @login_required
 def verify_preview():
     """Get preview of uploaded CSV for verification"""
-    if 'pending_csv' not in session:
+    csv_data = db.get_pending_upload(session['user_id'])
+    if not csv_data:
         return jsonify({'error': 'No pending upload'}), 400
-    
-    csv_data = session.get('pending_csv', [])
     
     # Enrich with lookups and detect changes
     enriched_data = []
@@ -266,14 +269,14 @@ def verify_preview():
 @login_required
 def process_schedules():
     """Process and publish schedules to Square"""
-    if 'pending_csv' not in session:
+    csv_data = db.get_pending_upload(session['user_id'])
+    if not csv_data:
         return jsonify({'error': 'No pending upload'}), 400
-    
-    data = request.json
+
+    data = request.json or {}
     if not data.get('approve'):
         return jsonify({'error': 'Approval required'}), 400
-    
-    csv_data = session.get('pending_csv', [])
+
     upload_id = db.create_upload_record(len(csv_data), session.get('username'))
     
     results = []
@@ -341,9 +344,9 @@ def process_schedules():
     
     # Update upload record
     db.update_upload_status(upload_id, 'COMPLETED', success_count, error_count)
-    
-    # Clear session
-    session.pop('pending_csv', None)
+
+    # Clear staged upload
+    db.clear_pending_upload(session['user_id'])
     session.pop('upload_timestamp', None)
     
     return jsonify({
@@ -475,9 +478,6 @@ def internal_error(error):
 # ==================== INITIALIZATION ====================
 
 if __name__ == '__main__':
-    # Initialize database
-    db.init_db()
-    
     # Create default admin user if none exists
     if not db.get_all_users():
         admin_pass = hash_password('admin123')
