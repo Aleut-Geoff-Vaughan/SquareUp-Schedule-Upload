@@ -1,0 +1,44 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# CI / dev tooling
+.github
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.venv
+venv
+env
+
+# Tests & docs (not needed in the runtime image)
+tests
+docs
+README.md
+DEPLOYMENT_GUIDE.md
+APPLICATION_PACKAGE_SUMMARY.md
+sample_schedule.csv
+pytest.ini
+
+# Local data & secrets
+.env
+.env.*
+data/*.db
+uploads/*
+schedules.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+*.log
+logs

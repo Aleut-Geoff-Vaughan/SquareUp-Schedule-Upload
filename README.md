@@ -74,11 +74,33 @@ python app.py
 - Docker Desktop installed (docker.com)
 - Your Square API Access Token
 
-#### Installation
+#### Pull from Docker Hub (easiest)
+
+The image is published automatically on every push to `main`:
+
+```bash
+docker pull geoffvaughan/square-schedule-upload:latest
+
+docker run -d --name square-schedule-manager \
+  -p 5000:5000 \
+  -e SQUARE_ENVIRONMENT=sandbox \
+  -e SANDBOX_ACCESS_TOKEN=your_sandbox_token \
+  -e PRODUCTION_ACCESS_TOKEN=your_production_token \
+  -e SECRET_KEY=your_secret_key \
+  -v $(pwd)/data:/app/data \
+  geoffvaughan/square-schedule-upload:latest
+```
+
+From Docker Desktop's UI: search for `geoffvaughan/square-schedule-upload`, click **Pull**, then **Run** with the env vars above.
+
+#### Or build from source
+
 ```bash
 # 1. Create .env file
 cat > .env << EOF
-SQUARE_ACCESS_TOKEN=your_token_here
+SQUARE_ENVIRONMENT=sandbox
+SANDBOX_ACCESS_TOKEN=your_sandbox_token
+PRODUCTION_ACCESS_TOKEN=your_production_token
 SECRET_KEY=your_secret_key_here
 EOF
 
