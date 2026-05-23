@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Team Members - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Team Members</h1>
+<p class="subtle">Map employee names to Square Team Member IDs. Team member is optional for open shifts.</p>
+
+<section class="card">
+    <h2>Add Team Member</h2>
+    <form id="add-form" class="form-row">
+        <input type="text" id="name" placeholder="Employee name" required>
+        <input type="text" id="square_id" placeholder="Square Team Member ID" required>
+        <button type="submit" class="btn primary">Add</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Existing Team Members</h2>
+    {% if team_members %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Square Team Member ID</th><th>Created</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for m in team_members %}
+                <tr data-id="{{ m.id }}">
+                    <td>{{ m.id }}</td>
+                    <td>{{ m.name }}</td>
+                    <td><code>{{ m.square_team_member_id }}</code></td>
+                    <td>{{ m.created_at }}</td>
+                    <td><button class="btn danger delete-btn" data-id="{{ m.id }}">Delete</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="subtle">No team members yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.SETTINGS_RESOURCE = {
+        endpoint: '{{ url_for("team_members") }}',
+        idField: 'square_team_member_id'
+    };
+</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

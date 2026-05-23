@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p class="subtle">Welcome back, {{ session.get('username') }}.</p>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Locations</div>
+        <div class="stat-value">{{ stats.total_locations }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Jobs</div>
+        <div class="stat-value">{{ stats.total_jobs }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Team Members</div>
+        <div class="stat-value">{{ stats.total_team_members }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Recent Uploads</div>
+        <div class="stat-value">{{ stats.recent_uploads }}</div>
+    </div>
+    <div class="stat-card pending">
+        <div class="stat-label">Pending Approvals</div>
+        <div class="stat-value">{{ stats.pending_approvals }}</div>
+    </div>
+</div>
+
+<section class="card">
+    <h2>Quick Actions</h2>
+    <div class="actions">
+        <a class="btn primary" href="{{ url_for('upload') }}">Upload Schedule CSV</a>
+        <a class="btn" href="{{ url_for('history') }}">View Upload History</a>
+        {% if session.get('is_admin') %}
+        <a class="btn" href="{{ url_for('locations') }}">Manage Locations</a>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

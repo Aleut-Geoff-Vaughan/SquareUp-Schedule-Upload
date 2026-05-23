@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Square Schedule Manager{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    {% if session.get('user_id') %}
+    <nav class="topnav">
+        <div class="topnav-inner">
+            <a class="brand" href="{{ url_for('dashboard') }}">Square Schedule Manager</a>
+            <div class="nav-links">
+                <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                <a href="{{ url_for('upload') }}">Upload</a>
+                <a href="{{ url_for('history') }}">History</a>
+                {% if session.get('is_admin') %}
+                <a href="{{ url_for('locations') }}">Locations</a>
+                <a href="{{ url_for('jobs') }}">Jobs</a>
+                <a href="{{ url_for('team_members') }}">Team Members</a>
+                <a href="{{ url_for('manage_users') }}">Users</a>
+                {% endif %}
+            </div>
+            <div class="nav-user">
+                <span>{{ session.get('username') }}</span>
+                <a class="logout" href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

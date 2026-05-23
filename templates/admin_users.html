@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Users - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Users</h1>
+<p class="subtle">Manage user accounts.</p>
+
+<section class="card">
+    <h2>Add User</h2>
+    <form id="add-user-form" class="form-row">
+        <input type="text" id="username" placeholder="Username" required>
+        <input type="password" id="password" placeholder="Password" required>
+        <label class="inline">
+            <input type="checkbox" id="is_admin"> Admin
+        </label>
+        <button type="submit" class="btn primary">Add User</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Existing Users</h2>
+    {% if users %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Username</th><th>Admin</th><th>Created</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>{{ u.id }}</td>
+                    <td>{{ u.username }}</td>
+                    <td>{{ 'Yes' if u.is_admin else 'No' }}</td>
+                    <td>{{ u.created_at }}</td>
+                    <td>
+                        {% if u.username != session.get('username') %}
+                        <button class="btn danger delete-user-btn" data-id="{{ u.id }}">Delete</button>
+                        {% else %}
+                        <span class="subtle">(you)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin_users.js') }}"></script>
+{% endblock %}
