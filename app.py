@@ -25,11 +25,32 @@ CORS(app)
 # Initialize database and Square API
 db = Database()
 db.init_db()
+
+
+def _apply_persisted_environment():
+    """If admin previously toggled environment via the UI, propagate to env."""
+    persisted = db.get_setting('square_environment')
+    if persisted in ('sandbox', 'production'):
+        os.environ['SQUARE_ENVIRONMENT'] = persisted
+
+
+_apply_persisted_environment()
 square = SquareAPI()
 
 # Ensure uploads directory exists
 UPLOAD_FOLDER = 'uploads'
 Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
+
+
+@app.context_processor
+def inject_environment():
+    """Expose Square environment + token-configured flag to all templates."""
+    from square_api import resolve_credentials
+    creds = resolve_credentials()
+    return {
+        'square_environment': creds['environment'],
+        'square_token_configured': bool(creds['access_token']),
+    }
 
 # ==================== AUTHENTICATION ====================
 
@@ -463,6 +484,48 @@ def square_settings():
     token = db.get_setting('square_access_token')
     return jsonify({
         'square_token': token[:20] + '...' if token else 'Not set'
+    })
+
+
+@app.route('/api/settings/environment', methods=['POST'])
+@login_required
+def set_environment():
+    """Admin-only: switch between sandbox and production at runtime.
+
+    Persisted in the settings table; each Square API call re-reads the
+    environment via _update_token() so the change is picked up immediately.
+    """
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.json or {}
+    env = (data.get('environment') or '').lower()
+    if env not in ('sandbox', 'production'):
+        return jsonify({'error': "environment must be 'sandbox' or 'production'"}), 400
+
+    db.set_setting('square_environment', env)
+    os.environ['SQUARE_ENVIRONMENT'] = env
+
+    from square_api import resolve_credentials
+    creds = resolve_credentials()
+    return jsonify({
+        'success': True,
+        'environment': creds['environment'],
+        'token_configured': bool(creds['access_token']),
+    })
+
+
+@app.route('/api/health', methods=['GET'])
+@login_required
+def health():
+    """Tiny health/status endpoint so testers can confirm the active env."""
+    from square_api import resolve_credentials
+    creds = resolve_credentials()
+    return jsonify({
+        'status': 'ok',
+        'environment': creds['environment'],
+        'token_configured': bool(creds['access_token']),
+        'application_id_configured': bool(creds['application_id']),
     })
 
 # ==================== ERROR HANDLERS ====================

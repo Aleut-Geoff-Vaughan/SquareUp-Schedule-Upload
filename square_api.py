@@ -8,19 +8,55 @@ import os
 import time
 from datetime import datetime
 
+
+SANDBOX_HOST = "https://connect.squareupsandbox.com"
+PRODUCTION_HOST = "https://connect.squareup.com"
+
+
+def get_environment():
+    """Resolve the active environment (sandbox|production), default sandbox."""
+    env = (os.environ.get('SQUARE_ENVIRONMENT') or 'sandbox').lower()
+    return 'production' if env == 'production' else 'sandbox'
+
+
+def resolve_credentials():
+    """Pick the right access token + application id for the active environment.
+
+    Falls back to the legacy SQUARE_ACCESS_TOKEN if the env-specific variable
+    isn't set, so existing setups keep working.
+    """
+    env = get_environment()
+    if env == 'production':
+        token = os.environ.get('PRODUCTION_ACCESS_TOKEN') or os.environ.get('SQUARE_ACCESS_TOKEN', '')
+        app_id = os.environ.get('PRODUCTION_APPLICATION_ID', '')
+        host = PRODUCTION_HOST
+    else:
+        token = os.environ.get('SANDBOX_ACCESS_TOKEN') or os.environ.get('SQUARE_ACCESS_TOKEN', '')
+        app_id = os.environ.get('SANDBOX_APPLICATION_ID', '')
+        host = SANDBOX_HOST
+    return {'environment': env, 'access_token': token, 'application_id': app_id, 'host': host}
+
+
 class SquareAPI:
     def __init__(self):
-        self.base_url = "https://connect.squareup.com/v2/labor"
-        self.access_token = os.environ.get('SQUARE_ACCESS_TOKEN', '')
+        creds = resolve_credentials()
+        self.environment = creds['environment']
+        self.access_token = creds['access_token']
+        self.application_id = creds['application_id']
+        self.base_url = f"{creds['host']}/v2/labor"
         self.headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Content-Type': 'application/json',
             'Square-Version': '2026-01-22'
         }
-    
+
     def _update_token(self):
-        """Update token from environment"""
-        self.access_token = os.environ.get('SQUARE_ACCESS_TOKEN', '')
+        """Refresh creds from environment (handles env var changes at runtime)."""
+        creds = resolve_credentials()
+        self.environment = creds['environment']
+        self.access_token = creds['access_token']
+        self.application_id = creds['application_id']
+        self.base_url = f"{creds['host']}/v2/labor"
         self.headers['Authorization'] = f'Bearer {self.access_token}'
     
     def _generate_idempotency_key(self, shift_data):

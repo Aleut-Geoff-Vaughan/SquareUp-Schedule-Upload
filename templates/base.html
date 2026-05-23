@@ -9,6 +9,20 @@
 </head>
 <body>
     {% if session.get('user_id') %}
+    <div class="env-banner env-{{ square_environment }}" role="status">
+        <span class="env-dot"></span>
+        <strong>{{ 'PRODUCTION' if square_environment == 'production' else 'SANDBOX (TEST)' }}</strong>
+        <span class="env-detail">
+            {% if square_environment == 'production' %}
+                Shifts will be sent to your live Square account.
+            {% else %}
+                Safe to test &mdash; shifts go to the Square sandbox.
+            {% endif %}
+            {% if not square_token_configured %}
+                <span class="env-warning">Token not configured.</span>
+            {% endif %}
+        </span>
+    </div>
     <nav class="topnav">
         <div class="topnav-inner">
             <a class="brand" href="{{ url_for('dashboard') }}">Square Schedule Manager</a>

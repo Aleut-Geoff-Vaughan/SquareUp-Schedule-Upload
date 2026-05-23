@@ -5,6 +5,25 @@
 <h1>Dashboard</h1>
 <p class="subtle">Welcome back, {{ session.get('username') }}.</p>
 
+{% if session.get('is_admin') %}
+<section class="card env-switch" id="env-switch">
+    <h2>Square Environment</h2>
+    <p class="subtle">Currently using <strong>{{ square_environment|upper }}</strong> credentials.
+       Token configured: <strong>{{ 'yes' if square_token_configured else 'no' }}</strong>.</p>
+    <div class="actions">
+        <button class="btn {% if square_environment == 'sandbox' %}primary{% endif %}"
+                data-env="sandbox" {% if square_environment == 'sandbox' %}disabled{% endif %}>
+            Use Sandbox (Test)
+        </button>
+        <button class="btn {% if square_environment == 'production' %}primary danger{% endif %}"
+                data-env="production" {% if square_environment == 'production' %}disabled{% endif %}>
+            Use Production (Live)
+        </button>
+    </div>
+    <p id="env-switch-status" class="subtle"></p>
+</section>
+{% endif %}
+
 <div class="stats-grid">
     <div class="stat-card">
         <div class="stat-label">Locations</div>
@@ -38,4 +57,10 @@
         {% endif %}
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+{% if session.get('is_admin') %}
+<script src="{{ url_for('static', filename='js/env_switch.js') }}"></script>
+{% endif %}
 {% endblock %}
