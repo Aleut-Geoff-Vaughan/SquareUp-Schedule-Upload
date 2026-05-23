@@ -1,0 +1,5 @@
+employee_name,job_title,location_name,shift_date,start_time,end_time,timezone_offset
+Jane Doe,Barista,Main Street,2026-06-01,09:00,17:00,-04:00
+John Smith,Manager,Main Street,2026-06-01,08:00,16:00,-04:00
+Alex Johnson,Barista,Downtown,2026-06-01,12:00,20:00,-04:00
+,Barista,Main Street,2026-06-02,06:00,10:00,-04:00

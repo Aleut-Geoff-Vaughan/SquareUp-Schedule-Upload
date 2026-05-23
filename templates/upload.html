@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Upload Schedule - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Upload Schedule CSV</h1>
+
+<ol class="steps">
+    <li class="active">Upload</li>
+    <li>Verify</li>
+    <li>Detect Changes</li>
+    <li>Approve &amp; Process</li>
+</ol>
+
+<section class="card">
+    <h2>Step 1: Select a CSV file</h2>
+    <p class="subtle">Required columns: employee_name, job_title, location_name, shift_date, start_time, end_time, timezone_offset</p>
+
+    <form id="upload-form" enctype="multipart/form-data">
+        <input type="file" id="file" name="file" accept=".csv" required>
+        <button type="submit" class="btn primary">Upload &amp; Validate</button>
+    </form>
+
+    <div id="upload-status" class="status hidden"></div>
+</section>
+
+<section id="verify-section" class="card hidden">
+    <h2>Step 2: Verify</h2>
+    <div id="verify-summary"></div>
+    <div class="table-wrap">
+        <table id="verify-table">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>Employee</th>
+                    <th>Job</th>
+                    <th>Location</th>
+                    <th>Date</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Status</th>
+                    <th>Errors</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div class="actions">
+        <button id="approve-btn" class="btn primary">Approve &amp; Send to Square</button>
+    </div>
+</section>
+
+<section id="results-section" class="card hidden">
+    <h2>Step 4: Results</h2>
+    <div id="results-summary"></div>
+    <div class="table-wrap">
+        <table id="results-table">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>Status</th>
+                    <th>Shift ID</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+{% endblock %}

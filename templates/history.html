@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Upload History - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Upload History</h1>
+
+<section class="card">
+    {% if uploads %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Uploaded By</th>
+                    <th>Rows</th>
+                    <th>Success</th>
+                    <th>Errors</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Processed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in uploads %}
+                <tr>
+                    <td>{{ u.id }}</td>
+                    <td>{{ u.uploaded_by or '-' }}</td>
+                    <td>{{ u.row_count }}</td>
+                    <td>{{ u.success_count }}</td>
+                    <td>{{ u.error_count }}</td>
+                    <td><span class="badge {{ u.status|lower }}">{{ u.status }}</span></td>
+                    <td>{{ u.created_at }}</td>
+                    <td>{{ u.processed_at or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="subtle">No uploads yet. <a href="{{ url_for('upload') }}">Upload your first schedule.</a></p>
+    {% endif %}
+</section>
+{% endblock %}

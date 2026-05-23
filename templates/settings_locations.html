@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Locations - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Locations</h1>
+<p class="subtle">Map your internal location names to Square Location IDs.</p>
+
+<section class="card">
+    <h2>Add Location</h2>
+    <form id="add-form" class="form-row">
+        <input type="text" id="name" placeholder="Location name" required>
+        <input type="text" id="square_id" placeholder="Square Location ID" required>
+        <button type="submit" class="btn primary">Add</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Existing Locations</h2>
+    {% if locations %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Square Location ID</th><th>Created</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for l in locations %}
+                <tr data-id="{{ l.id }}">
+                    <td>{{ l.id }}</td>
+                    <td>{{ l.name }}</td>
+                    <td><code>{{ l.square_location_id }}</code></td>
+                    <td>{{ l.created_at }}</td>
+                    <td><button class="btn danger delete-btn" data-id="{{ l.id }}">Delete</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="subtle">No locations yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.SETTINGS_RESOURCE = {
+        endpoint: '{{ url_for("locations") }}',
+        idField: 'square_location_id'
+    };
+</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

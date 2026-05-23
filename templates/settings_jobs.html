@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Jobs - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Jobs</h1>
+<p class="subtle">Map your internal job titles to Square Job IDs.</p>
+
+<section class="card">
+    <h2>Add Job</h2>
+    <form id="add-form" class="form-row">
+        <input type="text" id="name" placeholder="Job title" required>
+        <input type="text" id="square_id" placeholder="Square Job ID" required>
+        <button type="submit" class="btn primary">Add</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Existing Jobs</h2>
+    {% if jobs %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Square Job ID</th><th>Created</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for j in jobs %}
+                <tr data-id="{{ j.id }}">
+                    <td>{{ j.id }}</td>
+                    <td>{{ j.name }}</td>
+                    <td><code>{{ j.square_job_id }}</code></td>
+                    <td>{{ j.created_at }}</td>
+                    <td><button class="btn danger delete-btn" data-id="{{ j.id }}">Delete</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="subtle">No jobs yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.SETTINGS_RESOURCE = {
+        endpoint: '{{ url_for("jobs") }}',
+        idField: 'square_job_id'
+    };
+</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

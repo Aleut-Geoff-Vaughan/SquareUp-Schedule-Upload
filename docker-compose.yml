@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  square-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: square-schedule-manager
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_ENV: production
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-in-production}
+      SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN}
+      DB_PATH: /app/data/schedules.db
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - square-network
+
+networks:
+  square-network:
+    driver: bridge
