@@ -179,10 +179,17 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_location_by_name(self, name):
-        """Get location by name"""
+        """Get location by name. Match is whitespace- and case-insensitive
+        so a CSV value like 'dominion hills pool ' still matches the stored
+        'DOMINION HILLS POOL'."""
+        if name is None:
+            return None
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM locations WHERE name = ?', (name,))
+            cursor.execute(
+                'SELECT * FROM locations WHERE TRIM(name) = TRIM(?) COLLATE NOCASE',
+                (name,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
     
@@ -240,10 +247,15 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_job_by_name(self, name):
-        """Get job by name"""
+        """Get job by name (whitespace- and case-insensitive match)."""
+        if name is None:
+            return None
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jobs WHERE name = ?', (name,))
+            cursor.execute(
+                'SELECT * FROM jobs WHERE TRIM(name) = TRIM(?) COLLATE NOCASE',
+                (name,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
     
@@ -295,10 +307,15 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_team_member_by_name(self, name):
-        """Get team member by name"""
+        """Get team member by name (whitespace- and case-insensitive match)."""
+        if name is None or not str(name).strip():
+            return None
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM team_members WHERE name = ?', (name,))
+            cursor.execute(
+                'SELECT * FROM team_members WHERE TRIM(name) = TRIM(?) COLLATE NOCASE',
+                (name,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
     
