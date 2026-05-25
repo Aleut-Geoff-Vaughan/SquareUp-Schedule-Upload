@@ -27,6 +27,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Import smoke check
+        env:
+          SECRET_KEY: ci-smoke-key-not-secret
         run: python -c "import app; print('app imports OK; routes:', len(list(app.app.url_map.iter_rules())))"
 
       - name: Run tests
