@@ -13,6 +13,36 @@ SANDBOX_HOST = "https://connect.squareupsandbox.com"
 PRODUCTION_HOST = "https://connect.squareup.com"
 
 
+def _format_square_error(response):
+    """Build a human-readable error string from a Square error response.
+
+    Square error objects include category, code, detail, and a field reference
+    (sometimes named `field`, sometimes `field_name`). Including all of them
+    in the message lets the user see WHICH field is blank when Square says
+    "Field must not be blank".
+    """
+    try:
+        errors = response.json().get('errors') or []
+    except ValueError:
+        return f"Square API Error (HTTP {response.status_code}): {response.text[:500]}"
+
+    if not errors:
+        return f"Square API Error (HTTP {response.status_code}): {response.text[:500]}"
+
+    parts = []
+    for err in errors:
+        detail = err.get('detail') or err.get('code') or 'unknown error'
+        field = err.get('field') or err.get('field_name')
+        code = err.get('code')
+        bits = [detail]
+        if field:
+            bits.append(f"field={field}")
+        if code and code != detail:
+            bits.append(f"code={code}")
+        parts.append(' | '.join(bits))
+    return 'Square API Error: ' + '; '.join(parts)
+
+
 def get_environment():
     """Resolve the active environment (sandbox|production), default sandbox."""
     env = (os.environ.get('SQUARE_ENVIRONMENT') or 'sandbox').lower()
@@ -103,29 +133,34 @@ class SquareAPI:
                     'error': 'Square API token not configured. Please set SQUARE_ACCESS_TOKEN.'
                 }
             
-            # Build request
+            # Build request. Only include team_member_id when we actually have one;
+            # Square's production API rejects an explicit null with "Field must not be blank".
+            draft_details = {
+                "location_id": shift_data['location_id'],
+                "job_id": shift_data['job_id'],
+                "start_at": self._build_iso8601(
+                    shift_data['date'],
+                    shift_data['start_time'],
+                    shift_data['timezone']
+                ),
+                "end_at": self._build_iso8601(
+                    shift_data['date'],
+                    shift_data['end_time'],
+                    shift_data['timezone']
+                ),
+            }
+            tm_id = shift_data.get('team_member_id')
+            if tm_id:
+                draft_details['team_member_id'] = tm_id
+
             request_body = {
                 "idempotency_key": self._generate_idempotency_key(shift_data),
                 "scheduled_shift": {
                     "location_id": shift_data['location_id'],
-                    "draft_shift_details": {
-                        "location_id": shift_data['location_id'],
-                        "job_id": shift_data['job_id'],
-                        "team_member_id": shift_data.get('team_member_id'),
-                        "start_at": self._build_iso8601(
-                            shift_data['date'],
-                            shift_data['start_time'],
-                            shift_data['timezone']
-                        ),
-                        "end_at": self._build_iso8601(
-                            shift_data['date'],
-                            shift_data['end_time'],
-                            shift_data['timezone']
-                        )
-                    }
+                    "draft_shift_details": draft_details,
                 }
             }
-            
+
             # Make request
             response = requests.post(
                 f'{self.base_url}/scheduled-shifts',
@@ -133,7 +168,7 @@ class SquareAPI:
                 json=request_body,
                 timeout=10
             )
-            
+
             if response.ok:
                 data = response.json()
                 return {
@@ -141,13 +176,10 @@ class SquareAPI:
                     'shift_id': data['scheduled_shift']['id']
                 }
             else:
-                try:
-                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                except ValueError:
-                    error_msg = response.text
+                error_msg = _format_square_error(response)
                 return {
                     'success': False,
-                    'error': f"Square API Error: {error_msg}"
+                    'error': error_msg,
                 }
         
         except requests.exceptions.Timeout:
@@ -183,11 +215,7 @@ class SquareAPI:
             if response.ok:
                 return {'success': True}
             else:
-                try:
-                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                except ValueError:
-                    error_msg = response.text
-                return {'success': False, 'error': f"Square API Error: {error_msg}"}
+                return {'success': False, 'error': _format_square_error(response)}
 
         except requests.exceptions.Timeout:
             return {'success': False, 'error': 'API request timed out'}
@@ -267,11 +295,7 @@ class SquareAPI:
 
                 response = requests.post(url, headers=self.headers, json=body, timeout=15)
                 if not response.ok:
-                    try:
-                        error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                    except ValueError:
-                        error_msg = response.text
-                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+                    return {'success': False, 'error': _format_square_error(response)}
 
                 data = response.json()
                 shifts.extend(data.get('scheduled_shifts', []))
@@ -303,9 +327,8 @@ class SquareAPI:
 
             url = self.base_url.replace('/v2/labor', '/v2/locations')
             response = requests.get(url, headers=self.headers, timeout=15)
-            if response.status_code != 200:
-                error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                return {'success': False, 'error': f'Square API Error: {error_msg}'}
+            if not response.ok:
+                return {'success': False, 'error': _format_square_error(response)}
 
             return {'success': True, 'locations': response.json().get('locations', [])}
 
@@ -340,9 +363,8 @@ class SquareAPI:
                 if cursor:
                     params['cursor'] = cursor
                 response = requests.get(url, headers=self.headers, params=params, timeout=15)
-                if response.status_code != 200:
-                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+                if not response.ok:
+                    return {'success': False, 'error': _format_square_error(response)}
 
                 data = response.json()
                 jobs.extend(data.get('jobs', []))
@@ -385,9 +407,8 @@ class SquareAPI:
                     body['cursor'] = cursor
 
                 response = requests.post(url, headers=self.headers, json=body, timeout=15)
-                if response.status_code != 200:
-                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
-                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+                if not response.ok:
+                    return {'success': False, 'error': _format_square_error(response)}
 
                 data = response.json()
                 members.extend(data.get('team_members', []))
