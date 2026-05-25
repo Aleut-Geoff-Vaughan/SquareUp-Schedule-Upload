@@ -226,6 +226,33 @@ class SquareAPI:
             'shift_id': shift_id
         }
     
+    def list_locations(self):
+        """
+        List all locations from Square via GET /v2/locations.
+
+        Returns:
+            {'success': bool, 'locations': list, 'error': str (if failed)}
+        """
+        try:
+            self._update_token()
+            if not self.access_token or self.access_token.startswith('YOUR_'):
+                return {'success': False, 'error': 'Square API token not configured.'}
+
+            url = self.base_url.replace('/v2/labor', '/v2/locations')
+            response = requests.get(url, headers=self.headers, timeout=15)
+            if response.status_code != 200:
+                error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                return {'success': False, 'error': f'Square API Error: {error_msg}'}
+
+            return {'success': True, 'locations': response.json().get('locations', [])}
+
+        except requests.exceptions.Timeout:
+            return {'success': False, 'error': 'API request timed out'}
+        except requests.exceptions.ConnectionError:
+            return {'success': False, 'error': 'Connection error'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def list_jobs(self):
         """
         List all jobs from Square Team API, paginating through all results.

@@ -50,9 +50,14 @@ class Database:
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
                     square_location_id TEXT UNIQUE NOT NULL,
+                    timezone TEXT DEFAULT '-04:00',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Backfill timezone column for older databases that pre-date it.
+            cursor.execute("PRAGMA table_info(locations)")
+            if 'timezone' not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE locations ADD COLUMN timezone TEXT DEFAULT '-04:00'")
             
             # Jobs table
             cursor.execute('''
@@ -157,13 +162,13 @@ class Database:
     
     # ==================== LOCATIONS ====================
     
-    def add_location(self, name, square_location_id):
+    def add_location(self, name, square_location_id, timezone='-04:00'):
         """Add location"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                'INSERT INTO locations (name, square_location_id) VALUES (?, ?)',
-                (name, square_location_id)
+                'INSERT INTO locations (name, square_location_id, timezone) VALUES (?, ?, ?)',
+                (name, square_location_id, timezone)
             )
     
     def get_locations(self):
@@ -181,20 +186,40 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
     
-    def update_location(self, location_id, name, square_location_id):
+    def update_location(self, location_id, name, square_location_id, timezone=None):
         """Update location"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                'UPDATE locations SET name = ?, square_location_id = ? WHERE id = ?',
-                (name, square_location_id, location_id)
-            )
-    
+            if timezone is None:
+                cursor.execute(
+                    'UPDATE locations SET name = ?, square_location_id = ? WHERE id = ?',
+                    (name, square_location_id, location_id)
+                )
+            else:
+                cursor.execute(
+                    'UPDATE locations SET name = ?, square_location_id = ?, timezone = ? WHERE id = ?',
+                    (name, square_location_id, timezone, location_id)
+                )
+
     def delete_location(self, location_id):
         """Delete location"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM locations WHERE id = ?', (location_id,))
+
+    def replace_locations(self, rows):
+        """Atomically replace all locations.
+
+        Args:
+            rows: iterable of (name, square_location_id, timezone) tuples.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM locations')
+            cursor.executemany(
+                'INSERT INTO locations (name, square_location_id, timezone) VALUES (?, ?, ?)',
+                list(rows),
+            )
     
     # ==================== JOBS ====================
     

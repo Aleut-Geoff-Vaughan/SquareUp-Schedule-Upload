@@ -3,13 +3,25 @@
 
 {% block content %}
 <h1>Locations</h1>
-<p class="subtle">Map your internal location names to Square Location IDs.</p>
+<p class="subtle">Map your internal location names to Square Location IDs. Each location has a timezone used as the fallback when the schedule CSV omits the timezone_offset column.</p>
+
+<section class="card">
+    <h2>Sync from Square</h2>
+    <p class="subtle">Pulls all locations from Square and <strong>replaces</strong> this list. All synced locations default to Eastern Time; edit individual rows to change.</p>
+    <button id="sync-btn" type="button" class="btn primary">Sync from Square</button>
+    <div id="sync-status" class="status hidden"></div>
+</section>
 
 <section class="card">
     <h2>Add Location</h2>
     <form id="add-form" class="form-row">
         <input type="text" id="name" placeholder="Location name" required>
         <input type="text" id="square_id" placeholder="Square Location ID" required>
+        <select id="timezone">
+            {% for tz in timezone_choices %}
+            <option value="{{ tz.value }}" {% if tz.value == '-04:00' %}selected{% endif %}>{{ tz.label }}</option>
+            {% endfor %}
+        </select>
         <button type="submit" class="btn primary">Add</button>
     </form>
 </section>
@@ -20,7 +32,7 @@
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>ID</th><th>Name</th><th>Square Location ID</th><th>Created</th><th>Actions</th></tr>
+                <tr><th>ID</th><th>Name</th><th>Square Location ID</th><th>Timezone</th><th>Created</th><th>Actions</th></tr>
             </thead>
             <tbody>
                 {% for l in locations %}
@@ -28,6 +40,13 @@
                     <td>{{ l.id }}</td>
                     <td>{{ l.name }}</td>
                     <td><code>{{ l.square_location_id }}</code></td>
+                    <td>
+                        <select class="tz-select" data-id="{{ l.id }}" data-name="{{ l.name }}" data-sqid="{{ l.square_location_id }}">
+                            {% for tz in timezone_choices %}
+                            <option value="{{ tz.value }}" {% if tz.value == l.timezone %}selected{% endif %}>{{ tz.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
                     <td>{{ l.created_at }}</td>
                     <td><button class="btn danger delete-btn" data-id="{{ l.id }}">Delete</button></td>
                 </tr>
@@ -49,4 +68,53 @@
     };
 </script>
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+// Sync from Square
+document.getElementById('sync-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('sync-btn');
+    const statusEl = document.getElementById('sync-status');
+    if (!confirm('This will REPLACE all existing locations with whatever Square returns. Continue?')) return;
+
+    btn.disabled = true;
+    statusEl.textContent = 'Fetching locations from Square...';
+    statusEl.className = 'status';
+
+    try {
+        const res = await fetch('{{ url_for("locations_sync") }}', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = data.error || 'Sync failed';
+            statusEl.className = 'status error';
+            btn.disabled = false;
+            return;
+        }
+        statusEl.textContent = data.message + ' Reloading...';
+        statusEl.className = 'status success';
+        setTimeout(() => { window.location.reload(); }, 1200);
+    } catch (err) {
+        statusEl.textContent = 'Sync failed: ' + err.message;
+        statusEl.className = 'status error';
+        btn.disabled = false;
+    }
+});
+
+// Inline edit: timezone dropdown change posts an update.
+document.querySelectorAll('.tz-select').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+        const id = parseInt(sel.getAttribute('data-id'), 10);
+        const name = sel.getAttribute('data-name');
+        const sqid = sel.getAttribute('data-sqid');
+        const tz = sel.value;
+        const res = await fetch('{{ url_for("locations") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update', id, name, square_location_id: sqid, timezone: tz })
+        });
+        const data = await res.json();
+        if (!data.success) {
+            alert(data.error || 'Failed to update timezone');
+        }
+    });
+});
+</script>
 {% endblock %}

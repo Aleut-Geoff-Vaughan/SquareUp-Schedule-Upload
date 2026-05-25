@@ -126,6 +126,18 @@ def dashboard():
 
 # ==================== SETTINGS / CONFIGURATION ====================
 
+TIMEZONE_CHOICES = [
+    {'value': '-04:00', 'label': 'Eastern Time — EDT (-04:00)'},
+    {'value': '-05:00', 'label': 'Eastern Time — EST (-05:00) / Central — CDT'},
+    {'value': '-06:00', 'label': 'Central Time — CST (-06:00) / Mountain — MDT'},
+    {'value': '-07:00', 'label': 'Mountain Time — MST (-07:00) / Pacific — PDT / Arizona'},
+    {'value': '-08:00', 'label': 'Pacific Time — PST (-08:00) / Alaska — AKDT'},
+    {'value': '-09:00', 'label': 'Alaska — AKST (-09:00)'},
+    {'value': '-10:00', 'label': 'Hawaii (-10:00)'},
+    {'value': '+00:00', 'label': 'UTC (+00:00)'},
+]
+
+
 @app.route('/settings/locations', methods=['GET', 'POST'])
 @login_required
 def locations():
@@ -136,19 +148,67 @@ def locations():
     if request.method == 'POST':
         data = request.json
         action = data.get('action')
-        
+
         if action == 'add':
-            db.add_location(data['name'], data['square_location_id'])
+            db.add_location(
+                data['name'],
+                data['square_location_id'],
+                timezone=data.get('timezone') or '-04:00',
+            )
             return jsonify({'success': True, 'message': 'Location added'})
         elif action == 'update':
-            db.update_location(data['id'], data['name'], data['square_location_id'])
+            db.update_location(
+                data['id'],
+                data['name'],
+                data['square_location_id'],
+                timezone=data.get('timezone'),
+            )
             return jsonify({'success': True, 'message': 'Location updated'})
         elif action == 'delete':
             db.delete_location(data['id'])
             return jsonify({'success': True, 'message': 'Location deleted'})
-    
+
     locations_list = db.get_locations()
-    return render_template('settings_locations.html', locations=locations_list)
+    return render_template(
+        'settings_locations.html',
+        locations=locations_list,
+        timezone_choices=TIMEZONE_CHOICES,
+    )
+
+
+@app.route('/settings/locations/sync', methods=['POST'])
+@login_required
+def locations_sync():
+    """Pull all locations from Square and replace the local locations table.
+
+    All imported locations default to Eastern Time (-04:00); admins can edit
+    each location's timezone afterward.
+    """
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    result = square.list_locations()
+    if not result.get('success'):
+        return jsonify({'error': f'Could not fetch locations from Square: {result.get("error")}'}), 502
+
+    rows = []
+    for loc in result['locations']:
+        name = (loc.get('name') or '').strip()
+        lid = loc.get('id')
+        if not name or not lid:
+            continue
+        rows.append((name, lid, '-04:00'))
+
+    if not rows:
+        return jsonify({'error': 'Square returned no locations. Existing list was not modified.'}), 400
+
+    db.replace_locations(rows)
+
+    return jsonify({
+        'success': True,
+        'imported': len(rows),
+        'message': f'Replaced local locations with {len(rows)} entries from Square. All defaulted to Eastern Time; edit individually if needed.',
+    })
 
 @app.route('/settings/jobs', methods=['GET', 'POST'])
 @login_required
@@ -348,7 +408,7 @@ def upload():
             if not csv_data:
                 return jsonify({'error': 'CSV is empty or has no data rows'}), 400
 
-            required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time', 'timezone_offset']
+            required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time']
             header = reader.fieldnames or []
             missing = [c for c in required_columns if c not in header]
             if missing:
@@ -471,7 +531,9 @@ def process_schedules():
             
             if not location or not job:
                 raise ValueError(f"Invalid location or job")
-            
+
+            tz = (row.get('timezone_offset') or '').strip() or location.get('timezone') or '-04:00'
+
             # Build shift data
             shift_data = {
                 'location_id': location['square_location_id'],
@@ -481,7 +543,7 @@ def process_schedules():
                 'date': row['shift_date'],
                 'start_time': row['start_time'],
                 'end_time': row['end_time'],
-                'timezone': row['timezone_offset']
+                'timezone': tz
             }
             
             # Call Square API to create and publish
