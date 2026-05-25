@@ -6,6 +6,19 @@
 <p class="subtle">Map employee names to Square Team Member IDs. Team member is optional for open shifts.</p>
 
 <section class="card">
+    <h2>Import from Square export</h2>
+    <p class="subtle">Upload the Team Members CSV exported from Square. The importer skips Inactive rows, de-duplicates by email, looks up each Square Team Member ID via the Square API, and <strong>replaces</strong> the entire team members list.</p>
+    <p class="subtle">Required columns: First Name, Last Name, Email, Status.</p>
+
+    <form id="import-form" enctype="multipart/form-data">
+        <input type="file" id="import-file" name="file" accept=".csv" required>
+        <button type="submit" class="btn primary">Import &amp; Overwrite</button>
+    </form>
+
+    <div id="import-status" class="status hidden"></div>
+</section>
+
+<section class="card">
     <h2>Add Team Member</h2>
     <form id="add-form" class="form-row">
         <input type="text" id="name" placeholder="Employee name" required>
@@ -49,4 +62,44 @@
     };
 </script>
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+document.getElementById('import-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('import-file');
+    const statusEl = document.getElementById('import-status');
+    if (!fileInput.files.length) return;
+
+    if (!confirm('This will REPLACE all existing team members. Continue?')) return;
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    statusEl.textContent = 'Importing and matching against Square...';
+    statusEl.className = 'status';
+
+    try {
+        const res = await fetch('{{ url_for("team_members_import") }}', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+            let msg = data.error || 'Import failed';
+            if (Array.isArray(data.unmatched) && data.unmatched.length) {
+                msg += '\nUnmatched (' + data.unmatched.length + '): ' + data.unmatched.map(u => u.name + ' <' + u.email + '>').join(', ');
+            }
+            statusEl.textContent = msg;
+            statusEl.className = 'status error';
+            return;
+        }
+        let msg = data.message + ' Imported: ' + data.imported + '. Skipped inactive: ' + data.skipped_inactive + '. Skipped no-email: ' + data.skipped_no_email + '.';
+        if (Array.isArray(data.unmatched) && data.unmatched.length) {
+            msg += '\nUnmatched in Square (' + data.unmatched.length + '): ' + data.unmatched.map(u => u.name + ' <' + u.email + '>').join(', ');
+        }
+        statusEl.textContent = msg + ' Reloading...';
+        statusEl.className = 'status success';
+        setTimeout(() => { window.location.reload(); }, 2500);
+    } catch (err) {
+        statusEl.textContent = 'Import failed: ' + err.message;
+        statusEl.className = 'status error';
+    }
+});
+</script>
 {% endblock %}
