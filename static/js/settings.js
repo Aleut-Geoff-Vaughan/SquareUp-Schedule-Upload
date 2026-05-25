@@ -13,6 +13,9 @@
         const body = { action: 'add', name };
         body[config.idField] = squareId;
 
+        const tzEl = document.getElementById('timezone');
+        if (tzEl) body.timezone = tzEl.value;
+
         const res = await fetch(config.endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

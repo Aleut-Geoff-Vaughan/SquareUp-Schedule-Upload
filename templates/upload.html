@@ -13,7 +13,8 @@
 
 <section class="card">
     <h2>Step 1: Select a CSV file</h2>
-    <p class="subtle">Required columns: employee_name, job_title, location_name, shift_date, start_time, end_time, timezone_offset</p>
+    <p class="subtle">Required columns: employee_name, job_title, location_name, shift_date, start_time, end_time. Optional: timezone_offset (falls back to the location's configured timezone if missing or blank).</p>
+    <p class="subtle">Prefer to compose shifts in the app instead? <a href="{{ url_for('upload_build') }}">Build a schedule manually</a> from your master data using searchable dropdowns and date/time pickers.</p>
     <p class="subtle">Need a starting point? <a href="{{ url_for('upload_template') }}">Download CSV template</a> (includes headers and sample rows).</p>
 
     <form id="upload-form" enctype="multipart/form-data">

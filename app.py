@@ -126,6 +126,18 @@ def dashboard():
 
 # ==================== SETTINGS / CONFIGURATION ====================
 
+TIMEZONE_CHOICES = [
+    {'value': '-04:00', 'label': 'Eastern Time — EDT (-04:00)'},
+    {'value': '-05:00', 'label': 'Eastern Time — EST (-05:00) / Central — CDT'},
+    {'value': '-06:00', 'label': 'Central Time — CST (-06:00) / Mountain — MDT'},
+    {'value': '-07:00', 'label': 'Mountain Time — MST (-07:00) / Pacific — PDT / Arizona'},
+    {'value': '-08:00', 'label': 'Pacific Time — PST (-08:00) / Alaska — AKDT'},
+    {'value': '-09:00', 'label': 'Alaska — AKST (-09:00)'},
+    {'value': '-10:00', 'label': 'Hawaii (-10:00)'},
+    {'value': '+00:00', 'label': 'UTC (+00:00)'},
+]
+
+
 @app.route('/settings/locations', methods=['GET', 'POST'])
 @login_required
 def locations():
@@ -136,19 +148,67 @@ def locations():
     if request.method == 'POST':
         data = request.json
         action = data.get('action')
-        
+
         if action == 'add':
-            db.add_location(data['name'], data['square_location_id'])
+            db.add_location(
+                data['name'],
+                data['square_location_id'],
+                timezone=data.get('timezone') or '-04:00',
+            )
             return jsonify({'success': True, 'message': 'Location added'})
         elif action == 'update':
-            db.update_location(data['id'], data['name'], data['square_location_id'])
+            db.update_location(
+                data['id'],
+                data['name'],
+                data['square_location_id'],
+                timezone=data.get('timezone'),
+            )
             return jsonify({'success': True, 'message': 'Location updated'})
         elif action == 'delete':
             db.delete_location(data['id'])
             return jsonify({'success': True, 'message': 'Location deleted'})
-    
+
     locations_list = db.get_locations()
-    return render_template('settings_locations.html', locations=locations_list)
+    return render_template(
+        'settings_locations.html',
+        locations=locations_list,
+        timezone_choices=TIMEZONE_CHOICES,
+    )
+
+
+@app.route('/settings/locations/sync', methods=['POST'])
+@login_required
+def locations_sync():
+    """Pull all locations from Square and replace the local locations table.
+
+    All imported locations default to Eastern Time (-04:00); admins can edit
+    each location's timezone afterward.
+    """
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    result = square.list_locations()
+    if not result.get('success'):
+        return jsonify({'error': f'Could not fetch locations from Square: {result.get("error")}'}), 502
+
+    rows = []
+    for loc in result['locations']:
+        name = (loc.get('name') or '').strip()
+        lid = loc.get('id')
+        if not name or not lid:
+            continue
+        rows.append((name, lid, '-04:00'))
+
+    if not rows:
+        return jsonify({'error': 'Square returned no locations. Existing list was not modified.'}), 400
+
+    db.replace_locations(rows)
+
+    return jsonify({
+        'success': True,
+        'imported': len(rows),
+        'message': f'Replaced local locations with {len(rows)} entries from Square. All defaulted to Eastern Time; edit individually if needed.',
+    })
 
 @app.route('/settings/jobs', methods=['GET', 'POST'])
 @login_required
@@ -348,7 +408,7 @@ def upload():
             if not csv_data:
                 return jsonify({'error': 'CSV is empty or has no data rows'}), 400
 
-            required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time', 'timezone_offset']
+            required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time']
             header = reader.fieldnames or []
             missing = [c for c in required_columns if c not in header]
             if missing:
@@ -387,6 +447,56 @@ def upload_template():
         buffer.getvalue(),
         mimetype='text/csv',
         headers={'Content-Disposition': 'attachment; filename="schedule_template.csv"'},
+    )
+
+@app.route('/upload/build', methods=['GET', 'POST'])
+@login_required
+def upload_build():
+    """Manually compose a schedule from master data, then stage it for verification.
+
+    GET renders the builder UI with searchable dropdowns populated from the
+    locations, jobs, and team_members tables. POST accepts a JSON list of rows
+    and writes them to the same pending_uploads staging table the CSV flow uses,
+    so the existing /api/verify-preview and /api/process-schedules endpoints
+    handle the rest with no changes.
+    """
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        rows = data.get('rows') or []
+        if not isinstance(rows, list) or not rows:
+            return jsonify({'error': 'No rows submitted'}), 400
+
+        required = ['location_name', 'job_title', 'shift_date', 'start_time', 'end_time']
+        csv_rows = []
+        for idx, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                return jsonify({'error': f'Row {idx}: not an object'}), 400
+            for f in required:
+                if not (row.get(f) or '').strip():
+                    return jsonify({'error': f'Row {idx}: missing {f}'}), 400
+            csv_rows.append({
+                'employee_name': (row.get('employee_name') or '').strip(),
+                'job_title': row['job_title'].strip(),
+                'location_name': row['location_name'].strip(),
+                'shift_date': row['shift_date'].strip(),
+                'start_time': row['start_time'].strip(),
+                'end_time': row['end_time'].strip(),
+                'timezone_offset': (row.get('timezone_offset') or '').strip(),
+            })
+
+        db.set_pending_upload(session['user_id'], csv_rows)
+        session['upload_timestamp'] = datetime.now().isoformat()
+        return jsonify({
+            'success': True,
+            'row_count': len(csv_rows),
+            'message': f'{len(csv_rows)} rows staged for verification.',
+        })
+
+    return render_template(
+        'build_schedule.html',
+        locations=db.get_locations(),
+        jobs=db.get_jobs(),
+        team_members=db.get_team_members(),
     )
 
 @app.route('/api/verify-preview', methods=['GET'])
@@ -471,7 +581,9 @@ def process_schedules():
             
             if not location or not job:
                 raise ValueError(f"Invalid location or job")
-            
+
+            tz = (row.get('timezone_offset') or '').strip() or location.get('timezone') or '-04:00'
+
             # Build shift data
             shift_data = {
                 'location_id': location['square_location_id'],
@@ -481,7 +593,7 @@ def process_schedules():
                 'date': row['shift_date'],
                 'start_time': row['start_time'],
                 'end_time': row['end_time'],
-                'timezone': row['timezone_offset']
+                'timezone': tz
             }
             
             # Call Square API to create and publish

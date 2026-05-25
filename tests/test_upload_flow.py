@@ -121,3 +121,50 @@ def test_process_requires_approval(logged_in):
     _upload_sample(logged_in)
     resp = logged_in.post("/api/process-schedules", json={"approve": False})
     assert resp.status_code == 400
+
+
+def test_build_stages_manual_rows(logged_in):
+    _seed_lookups(logged_in.application_module)
+    payload = {
+        "rows": [
+            {
+                "location_name": "Main Street",
+                "job_title": "Barista",
+                "employee_name": "Jane Doe",
+                "shift_date": "2026-07-04",
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "timezone_offset": "-04:00",
+            },
+            {
+                "location_name": "Main Street",
+                "job_title": "Manager",
+                "employee_name": "",
+                "shift_date": "2026-07-04",
+                "start_time": "10:00",
+                "end_time": "18:00",
+            },
+        ]
+    }
+    resp = logged_in.post("/upload/build", json=payload)
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["row_count"] == 2
+
+    preview = logged_in.get("/api/verify-preview")
+    assert preview.status_code == 200
+    pdata = preview.get_json()
+    assert pdata["total_rows"] == 2
+    assert pdata["valid_rows"] == 2
+
+
+def test_build_rejects_empty_rows(logged_in):
+    resp = logged_in.post("/upload/build", json={"rows": []})
+    assert resp.status_code == 400
+
+
+def test_build_rejects_missing_fields(logged_in):
+    resp = logged_in.post("/upload/build", json={"rows": [{"location_name": "Main Street"}]})
+    assert resp.status_code == 400
+    assert b"missing" in resp.data.lower()
