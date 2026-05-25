@@ -226,6 +226,49 @@ class SquareAPI:
             'shift_id': shift_id
         }
     
+    def list_jobs(self):
+        """
+        List all jobs from Square Labor API, paginating through all results.
+
+        Returns:
+            {'success': bool, 'jobs': list, 'error': str (if failed)}
+        """
+        try:
+            self._update_token()
+            if not self.access_token or self.access_token.startswith('YOUR_'):
+                return {'success': False, 'error': 'Square API token not configured.'}
+
+            jobs = []
+            cursor = None
+            while True:
+                params = {}
+                if cursor:
+                    params['cursor'] = cursor
+                response = requests.get(
+                    f'{self.base_url}/jobs',
+                    headers=self.headers,
+                    params=params,
+                    timeout=15,
+                )
+                if response.status_code != 200:
+                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+
+                data = response.json()
+                jobs.extend(data.get('jobs', []))
+                cursor = data.get('cursor')
+                if not cursor:
+                    break
+
+            return {'success': True, 'jobs': jobs}
+
+        except requests.exceptions.Timeout:
+            return {'success': False, 'error': 'API request timed out'}
+        except requests.exceptions.ConnectionError:
+            return {'success': False, 'error': 'Connection error'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def list_team_members(self, status='ACTIVE'):
         """
         List team members from Square, paginating through all results.
