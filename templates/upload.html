@@ -14,6 +14,7 @@
 <section class="card">
     <h2>Step 1: Select a CSV file</h2>
     <p class="subtle">Required columns: employee_name, job_title, location_name, shift_date, start_time, end_time, timezone_offset</p>
+    <p class="subtle">Need a starting point? <a href="{{ url_for('upload_template') }}">Download CSV template</a> (includes headers and sample rows).</p>
 
     <form id="upload-form" enctype="multipart/form-data">
         <input type="file" id="file" name="file" accept=".csv" required>

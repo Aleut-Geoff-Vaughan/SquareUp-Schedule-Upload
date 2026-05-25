@@ -3,10 +3,11 @@ Square Schedule Manager
 Main Flask Application
 """
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response
 from flask_cors import CORS
 import os
 import csv
+import io
 import json
 from datetime import datetime, timedelta
 from functools import wraps
@@ -230,6 +231,28 @@ def upload():
             return jsonify({'error': str(e)}), 400
     
     return render_template('upload.html')
+
+@app.route('/upload/template', methods=['GET'])
+@login_required
+def upload_template():
+    """Download a CSV template with required headers and sample rows."""
+    headers = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time', 'timezone_offset']
+    sample_rows = [
+        ['Jane Doe', 'Barista', 'Main Street', '2026-06-01', '09:00', '17:00', '-04:00'],
+        ['John Smith', 'Manager', 'Main Street', '2026-06-01', '08:00', '16:00', '-04:00'],
+        ['Alex Johnson', 'Barista', 'Downtown', '2026-06-01', '12:00', '20:00', '-04:00'],
+    ]
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(sample_rows)
+
+    return Response(
+        buffer.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="schedule_template.csv"'},
+    )
 
 @app.route('/api/verify-preview', methods=['GET'])
 @login_required
