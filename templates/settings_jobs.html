@@ -6,6 +6,13 @@
 <p class="subtle">Map your internal job titles to Square Job IDs.</p>
 
 <section class="card">
+    <h2>Sync from Square</h2>
+    <p class="subtle">Pulls all jobs from your Square Labor API and <strong>replaces</strong> this list with the result. Each Square job's title becomes the local name, and its ID is recorded for schedule uploads.</p>
+    <button id="sync-btn" type="button" class="btn primary">Sync from Square</button>
+    <div id="sync-status" class="status hidden"></div>
+</section>
+
+<section class="card">
     <h2>Add Job</h2>
     <form id="add-form" class="form-row">
         <input type="text" id="name" placeholder="Job title" required>
@@ -49,4 +56,33 @@
     };
 </script>
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+document.getElementById('sync-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('sync-btn');
+    const statusEl = document.getElementById('sync-status');
+    if (!confirm('This will REPLACE all existing jobs with whatever Square returns. Continue?')) return;
+
+    btn.disabled = true;
+    statusEl.textContent = 'Fetching jobs from Square...';
+    statusEl.className = 'status';
+
+    try {
+        const res = await fetch('{{ url_for("jobs_sync") }}', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = data.error || 'Sync failed';
+            statusEl.className = 'status error';
+            btn.disabled = false;
+            return;
+        }
+        statusEl.textContent = data.message + ' Reloading...';
+        statusEl.className = 'status success';
+        setTimeout(() => { window.location.reload(); }, 1200);
+    } catch (err) {
+        statusEl.textContent = 'Sync failed: ' + err.message;
+        statusEl.className = 'status error';
+        btn.disabled = false;
+    }
+});
+</script>
 {% endblock %}

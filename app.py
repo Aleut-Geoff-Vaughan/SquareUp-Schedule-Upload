@@ -166,6 +166,40 @@ def jobs():
     jobs_list = db.get_jobs()
     return render_template('settings_jobs.html', jobs=jobs_list)
 
+@app.route('/settings/jobs/sync', methods=['POST'])
+@login_required
+def jobs_sync():
+    """Pull all jobs from Square Labor API and replace the local jobs table."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    result = square.list_jobs()
+    if not result.get('success'):
+        return jsonify({'error': f'Could not fetch jobs from Square: {result.get("error")}'}), 502
+
+    rows = []
+    skipped = []
+    for j in result['jobs']:
+        title = (j.get('title') or '').strip()
+        jid = j.get('id')
+        if not title or not jid:
+            skipped.append(j)
+            continue
+        rows.append((title, jid))
+
+    if not rows:
+        return jsonify({'error': 'Square returned no jobs. Existing list was not modified.'}), 400
+
+    db.replace_jobs(rows)
+
+    return jsonify({
+        'success': True,
+        'imported': len(rows),
+        'skipped': len(skipped),
+        'jobs': [{'name': r[0], 'square_job_id': r[1]} for r in rows],
+        'message': f'Replaced local jobs with {len(rows)} entries from Square.',
+    })
+
 @app.route('/settings/team-members', methods=['GET', 'POST'])
 @login_required
 def team_members():

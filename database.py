@@ -236,6 +236,20 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM jobs WHERE id = ?', (job_id,))
+
+    def replace_jobs(self, rows):
+        """Atomically replace all jobs with the provided rows.
+
+        Args:
+            rows: iterable of (name, square_job_id) tuples.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM jobs')
+            cursor.executemany(
+                'INSERT INTO jobs (name, square_job_id) VALUES (?, ?)',
+                list(rows),
+            )
     
     # ==================== TEAM MEMBERS ====================
     
