@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY database.py .
 COPY square_api.py .
+COPY ollama_client.py .
 COPY templates/ templates/
 COPY static/ static/
 
