@@ -123,6 +123,48 @@ def test_process_requires_approval(logged_in):
     assert resp.status_code == 400
 
 
+def test_lookups_tolerate_whitespace_and_case(logged_in):
+    """Real-world bug: CSV had 'DOMINION HILLS POOL' but lookups failed because
+    of trailing space / case difference. The lookup methods should normalize."""
+    app_module = logged_in.application_module
+    app_module.db.add_location("DOMINION HILLS POOL", "L_POOL", timezone="-04:00")
+    app_module.db.add_job("Lifeguard", "J_LG")
+    app_module.db.add_team_member("Jane Doe", "T_JANE")
+
+    # Trailing whitespace
+    assert app_module.db.get_location_by_name("DOMINION HILLS POOL ")["square_location_id"] == "L_POOL"
+    # Different case
+    assert app_module.db.get_location_by_name("dominion hills pool")["square_location_id"] == "L_POOL"
+    # Both
+    assert app_module.db.get_location_by_name("  Dominion Hills Pool  ")["square_location_id"] == "L_POOL"
+    # Jobs
+    assert app_module.db.get_job_by_name("LIFEGUARD")["square_job_id"] == "J_LG"
+    assert app_module.db.get_job_by_name("Lifeguard ")["square_job_id"] == "J_LG"
+    # Team members
+    assert app_module.db.get_team_member_by_name("jane doe")["square_team_member_id"] == "T_JANE"
+    # Blank / None returns None (not a SQL error)
+    assert app_module.db.get_location_by_name(None) is None
+    assert app_module.db.get_team_member_by_name("") is None
+
+
+def test_upload_strips_cell_whitespace(logged_in):
+    """A CSV with trailing spaces in cells should still validate cleanly."""
+    _seed_lookups(logged_in.application_module)
+    messy_csv = (
+        "employee_name,job_title,location_name,shift_date,start_time,end_time,timezone_offset\n"
+        "Jane Doe , Barista ,Main Street ,2026-06-01,09:00,17:00,-04:00\n"
+    )
+    resp = logged_in.post(
+        "/upload",
+        data={"file": (io.BytesIO(messy_csv.encode("utf-8")), "messy.csv")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200
+    preview = logged_in.get("/api/verify-preview").get_json()
+    assert preview["valid_rows"] == 1
+    assert preview["invalid_rows"] == 0
+
+
 def test_build_stages_manual_rows(logged_in):
     _seed_lookups(logged_in.application_module)
     payload = {

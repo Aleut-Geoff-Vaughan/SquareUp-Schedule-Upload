@@ -401,16 +401,23 @@ def upload():
             return jsonify({'error': 'File must be CSV'}), 400
         
         try:
-            # Read CSV
-            stream = file.stream.read().decode("UTF8")
+            # Read CSV. Decode with utf-8-sig to swallow any BOM that Excel
+            # likes to prepend to the first column header, and strip every cell
+            # so trailing whitespace / stray \r doesn't break lookups later.
+            stream = file.stream.read().decode("utf-8-sig")
             reader = csv.DictReader(stream.splitlines())
-            csv_data = list(reader)
+            csv_data = []
+            for row in reader:
+                csv_data.append({
+                    (k.strip() if k else k): (v.strip() if isinstance(v, str) else v)
+                    for k, v in row.items()
+                })
 
             if not csv_data:
                 return jsonify({'error': 'CSV is empty or has no data rows'}), 400
 
             required_columns = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time']
-            header = reader.fieldnames or []
+            header = [h.strip() for h in (reader.fieldnames or [])]
             missing = [c for c in required_columns if c not in header]
             if missing:
                 return jsonify({'error': f"Missing required column(s): {', '.join(missing)}"}), 400
