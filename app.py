@@ -190,6 +190,96 @@ def team_members():
     team_members_list = db.get_team_members()
     return render_template('settings_team_members.html', team_members=team_members_list)
 
+@app.route('/settings/team-members/import', methods=['POST'])
+@login_required
+def team_members_import():
+    """Import team members from a Square export CSV.
+
+    Skips Inactive rows, de-duplicates by email, and matches each row to a
+    Square Team Member ID by email via the Square API. Overwrites the
+    existing team_members table on success.
+    """
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    if not file.filename.lower().endswith('.csv'):
+        return jsonify({'error': 'File must be CSV'}), 400
+
+    try:
+        stream = file.stream.read().decode('utf-8-sig')
+        reader = csv.DictReader(io.StringIO(stream))
+        required = {'First Name', 'Last Name', 'Email', 'Status'}
+        header = set(reader.fieldnames or [])
+        missing = required - header
+        if missing:
+            return jsonify({'error': f'CSV is missing required column(s): {", ".join(sorted(missing))}'}), 400
+
+        seen_emails = set()
+        candidates = []
+        skipped_inactive = 0
+        skipped_no_email = 0
+        for row in reader:
+            if (row.get('Status') or '').strip().lower() != 'active':
+                skipped_inactive += 1
+                continue
+            email = (row.get('Email') or '').strip().lower()
+            if not email:
+                skipped_no_email += 1
+                continue
+            if email in seen_emails:
+                continue
+            seen_emails.add(email)
+            first = (row.get('First Name') or '').strip()
+            last = (row.get('Last Name') or '').strip()
+            name = f'{first} {last}'.strip()
+            candidates.append({'name': name, 'email': email})
+
+        if not candidates:
+            return jsonify({'error': 'No active rows with an email found in the CSV.'}), 400
+
+        result = square.list_team_members(status='ACTIVE')
+        if not result.get('success'):
+            return jsonify({'error': f'Could not fetch team members from Square: {result.get("error")}'}), 502
+
+        square_by_email = {}
+        for m in result['team_members']:
+            mail = (m.get('email_address') or '').strip().lower()
+            if mail and mail not in square_by_email:
+                square_by_email[mail] = m['id']
+
+        matched = []
+        unmatched = []
+        for c in candidates:
+            sid = square_by_email.get(c['email'])
+            if sid:
+                matched.append((c['name'], sid))
+            else:
+                unmatched.append({'name': c['name'], 'email': c['email']})
+
+        if not matched:
+            return jsonify({
+                'error': 'No CSV rows matched any Square team member by email. Existing team members were NOT modified.',
+                'unmatched': unmatched,
+            }), 400
+
+        db.replace_team_members(matched)
+
+        return jsonify({
+            'success': True,
+            'imported': len(matched),
+            'skipped_inactive': skipped_inactive,
+            'skipped_no_email': skipped_no_email,
+            'unmatched': unmatched,
+            'message': f'Replaced team members with {len(matched)} active entries from Square.',
+        })
+    except Exception as e:
+        return jsonify({'error': f'Import failed: {e}'}), 400
+
 # ==================== CSV UPLOAD & PROCESSING ====================
 
 @app.route('/upload', methods=['GET', 'POST'])

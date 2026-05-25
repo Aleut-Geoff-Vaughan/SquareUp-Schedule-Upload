@@ -277,6 +277,20 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM team_members WHERE id = ?', (member_id,))
+
+    def replace_team_members(self, rows):
+        """Atomically replace all team members with the provided rows.
+
+        Args:
+            rows: iterable of (name, square_team_member_id) tuples.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM team_members')
+            cursor.executemany(
+                'INSERT INTO team_members (name, square_team_member_id) VALUES (?, ?)',
+                list(rows),
+            )
     
     # ==================== UPLOADS ====================
     

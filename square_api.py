@@ -226,6 +226,51 @@ class SquareAPI:
             'shift_id': shift_id
         }
     
+    def list_team_members(self, status='ACTIVE'):
+        """
+        List team members from Square, paginating through all results.
+
+        Args:
+            status: 'ACTIVE', 'INACTIVE', or None for all.
+
+        Returns:
+            {'success': bool, 'team_members': list, 'error': str (if failed)}
+        """
+        try:
+            self._update_token()
+            if not self.access_token or self.access_token.startswith('YOUR_'):
+                return {'success': False, 'error': 'Square API token not configured.'}
+
+            url = self.base_url.replace('/v2/labor', '/v2/team-members/search')
+            members = []
+            cursor = None
+            while True:
+                body = {'limit': 200}
+                if status:
+                    body['query'] = {'filter': {'status': status}}
+                if cursor:
+                    body['cursor'] = cursor
+
+                response = requests.post(url, headers=self.headers, json=body, timeout=15)
+                if response.status_code != 200:
+                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+
+                data = response.json()
+                members.extend(data.get('team_members', []))
+                cursor = data.get('cursor')
+                if not cursor:
+                    break
+
+            return {'success': True, 'team_members': members}
+
+        except requests.exceptions.Timeout:
+            return {'success': False, 'error': 'API request timed out'}
+        except requests.exceptions.ConnectionError:
+            return {'success': False, 'error': 'Connection error'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def test_connection(self):
         """
         Test if API token is valid by making a test request
