@@ -20,6 +20,7 @@ import hashlib
 # Import our custom modules
 from database import Database
 from square_api import SquareAPI
+from ollama_client import OllamaClient, DEFAULT_HOST as OLLAMA_DEFAULT_HOST, DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
 
 # Initialize Flask app
 _secret_key = os.environ.get('SECRET_KEY', '').strip()
@@ -448,6 +449,259 @@ def upload_template():
         mimetype='text/csv',
         headers={'Content-Disposition': 'attachment; filename="schedule_template.csv"'},
     )
+
+
+def _build_master_data_markdown():
+    """Build a Markdown export of master data for use as LLM context."""
+    locations = db.get_locations()
+    jobs = db.get_jobs()
+    members = db.get_team_members()
+
+    lines = []
+    lines.append('# Square Schedule Master Data')
+    lines.append('')
+    lines.append('Use this file as context when asking an LLM (Claude, GPT, local model) to convert a messy schedule into the import CSV format expected by Square Schedule Manager.')
+    lines.append('')
+    lines.append('## Required output format')
+    lines.append('')
+    lines.append('Output must be a CSV with these exact column headers (order is not enforced, but headers must match exactly):')
+    lines.append('')
+    lines.append('| Column | Required | Format | Notes |')
+    lines.append('| --- | --- | --- | --- |')
+    lines.append('| employee_name | optional | full name | blank for an open shift; when present must match a team member name exactly |')
+    lines.append('| job_title | yes | text | must match a job name exactly |')
+    lines.append('| location_name | yes | text | must match a location name exactly |')
+    lines.append('| shift_date | yes | YYYY-MM-DD | ISO 8601 calendar date |')
+    lines.append('| start_time | yes | HH:MM | 24-hour, local time at the location |')
+    lines.append('| end_time | yes | HH:MM | 24-hour, local time at the location |')
+    lines.append('| timezone_offset | optional | ±HH:MM | e.g. -04:00; if blank, the location\'s configured timezone is used |')
+    lines.append('')
+    lines.append('Sample row (header omitted):')
+    lines.append('')
+    lines.append('```')
+    lines.append('Jane Doe,Barista,Main Street,2026-06-01,09:00,17:00,-04:00')
+    lines.append('```')
+    lines.append('')
+    lines.append('Rules to follow when normalizing:')
+    lines.append('')
+    lines.append('- Match employee, job, and location names exactly to the lists below. If unsure, leave employee_name blank (open shift) rather than guessing.')
+    lines.append('- Convert any time format (12-hour, AM/PM, dotted, etc.) to 24-hour HH:MM.')
+    lines.append('- Convert any date format to YYYY-MM-DD.')
+    lines.append('- Output the CSV only — no Markdown code fences, no commentary, no extra columns.')
+    lines.append('')
+
+    lines.append('## Locations')
+    lines.append('')
+    if locations:
+        lines.append('| Name | Timezone |')
+        lines.append('| --- | --- |')
+        for l in locations:
+            lines.append(f"| {l['name']} | {l.get('timezone') or '-04:00'} |")
+    else:
+        lines.append('_(none yet — sync from Square in Settings → Locations)_')
+    lines.append('')
+
+    lines.append('## Jobs')
+    lines.append('')
+    if jobs:
+        lines.append('| Name |')
+        lines.append('| --- |')
+        for j in jobs:
+            lines.append(f"| {j['name']} |")
+    else:
+        lines.append('_(none yet — sync from Square in Settings → Jobs)_')
+    lines.append('')
+
+    lines.append('## Team Members')
+    lines.append('')
+    if members:
+        lines.append('| Name |')
+        lines.append('| --- |')
+        for m in members:
+            lines.append(f"| {m['name']} |")
+    else:
+        lines.append('_(none yet — import from a Square export in Settings → Team Members)_')
+    lines.append('')
+
+    return '\n'.join(lines)
+
+
+@app.route('/admin/master-data.md', methods=['GET'])
+@login_required
+def master_data_md():
+    """Download the master data as Markdown for use as LLM context."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    content = _build_master_data_markdown()
+    filename = f"square-schedule-master-{datetime.now().strftime('%Y%m%d')}.md"
+    return Response(
+        content,
+        mimetype='text/markdown',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+# ==================== AI CONVERT (OLLAMA) ====================
+
+
+def _ollama_config():
+    """Read Ollama host + model from settings, falling back to defaults."""
+    host = db.get_setting('ollama_host') or OLLAMA_DEFAULT_HOST
+    model = db.get_setting('ollama_model') or OLLAMA_DEFAULT_MODEL
+    return host, model
+
+
+@app.route('/admin/ai-convert', methods=['GET'])
+@login_required
+def ai_convert_page():
+    """Page that hosts Ollama settings, the messy-file uploader, and the result preview."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    host, model = _ollama_config()
+    return render_template(
+        'ai_convert.html',
+        ollama_host=host,
+        ollama_model=model,
+        ollama_default_host=OLLAMA_DEFAULT_HOST,
+        ollama_default_model=OLLAMA_DEFAULT_MODEL,
+    )
+
+
+@app.route('/api/settings/ollama', methods=['GET', 'POST'])
+@login_required
+def ollama_settings():
+    """Read or update Ollama host + model in the settings table."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        host = (data.get('host') or '').strip()
+        model = (data.get('model') or '').strip()
+        if host:
+            db.set_setting('ollama_host', host)
+        if model:
+            db.set_setting('ollama_model', model)
+        return jsonify({'success': True, 'host': host or db.get_setting('ollama_host'), 'model': model or db.get_setting('ollama_model')})
+
+    host, model = _ollama_config()
+    return jsonify({'host': host, 'model': model})
+
+
+@app.route('/api/ollama/test', methods=['POST'])
+@login_required
+def ollama_test():
+    """Ping Ollama and list installed models."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    host, model = _ollama_config()
+    result = OllamaClient(host=host, model=model).ping()
+    return jsonify(result), (200 if result.get('success') else 502)
+
+
+@app.route('/admin/ai-convert/upload', methods=['POST'])
+@login_required
+def ai_convert_upload():
+    """Send an uploaded messy schedule file to Ollama and return its CSV output.
+
+    Does NOT stage anything yet — the user reviews/edits the output, then
+    posts to /admin/ai-convert/stage to commit it as a pending upload.
+    """
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    allowed = ('.csv', '.tsv', '.txt')
+    if not file.filename.lower().endswith(allowed):
+        return jsonify({'error': f'Only {", ".join(allowed)} files are accepted. For Excel, use the Markdown export with Claude.ai.'}), 400
+
+    raw = file.stream.read()
+    try:
+        text = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode('latin-1')
+        except Exception as e:
+            return jsonify({'error': f'Could not decode file: {e}'}), 400
+
+    if len(text) > 100_000:
+        return jsonify({'error': 'File is larger than 100k characters. Try splitting it.'}), 400
+
+    master = _build_master_data_markdown()
+    system_prompt = (
+        'You are a strict schedule normalizer. Your only output is a CSV that exactly matches '
+        'the required header and rules in the master data document the user provides as context. '
+        'Do not wrap the output in Markdown code fences. Do not add commentary. Do not add columns. '
+        'If you cannot determine a field, leave it blank rather than guessing.'
+    )
+    user_prompt = (
+        'CONTEXT (master data and required format):\n\n'
+        f'{master}\n\n'
+        '---\n\n'
+        'INPUT (messy schedule to convert):\n\n'
+        f'{text}\n\n'
+        '---\n\n'
+        'Output the CSV now. Begin with the header row.'
+    )
+
+    host, model = _ollama_config()
+    result = OllamaClient(host=host, model=model).chat(system_prompt, user_prompt)
+    if not result.get('success'):
+        return jsonify({'error': result.get('error')}), 502
+
+    content = (result.get('content') or '').strip()
+    # Strip code fences if the model added them anyway.
+    if content.startswith('```'):
+        lines = content.splitlines()
+        if lines and lines[0].startswith('```'):
+            lines = lines[1:]
+        if lines and lines[-1].startswith('```'):
+            lines = lines[:-1]
+        content = '\n'.join(lines).strip()
+
+    return jsonify({'success': True, 'csv': content, 'model': model})
+
+
+@app.route('/admin/ai-convert/stage', methods=['POST'])
+@login_required
+def ai_convert_stage():
+    """Take an (optionally edited) CSV body and stage it as a pending upload."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json(silent=True) or {}
+    csv_text = (data.get('csv') or '').strip()
+    if not csv_text:
+        return jsonify({'error': 'CSV is empty.'}), 400
+
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = list(reader)
+        if not rows:
+            return jsonify({'error': 'No data rows found.'}), 400
+
+        required = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time']
+        header = set(reader.fieldnames or [])
+        missing = [c for c in required if c not in header]
+        if missing:
+            return jsonify({'error': f'Missing required column(s): {", ".join(missing)}'}), 400
+
+        db.set_pending_upload(session['user_id'], rows)
+        session['upload_timestamp'] = datetime.now().isoformat()
+        return jsonify({
+            'success': True,
+            'row_count': len(rows),
+            'redirect': url_for('upload') + '?staged=1',
+            'message': f'{len(rows)} rows staged for verification.',
+        })
+    except Exception as e:
+        return jsonify({'error': f'Could not parse CSV: {e}'}), 400
+
 
 @app.route('/upload/build', methods=['GET', 'POST'])
 @login_required
