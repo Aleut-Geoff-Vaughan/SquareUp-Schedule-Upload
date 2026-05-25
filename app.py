@@ -449,6 +449,56 @@ def upload_template():
         headers={'Content-Disposition': 'attachment; filename="schedule_template.csv"'},
     )
 
+@app.route('/upload/build', methods=['GET', 'POST'])
+@login_required
+def upload_build():
+    """Manually compose a schedule from master data, then stage it for verification.
+
+    GET renders the builder UI with searchable dropdowns populated from the
+    locations, jobs, and team_members tables. POST accepts a JSON list of rows
+    and writes them to the same pending_uploads staging table the CSV flow uses,
+    so the existing /api/verify-preview and /api/process-schedules endpoints
+    handle the rest with no changes.
+    """
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        rows = data.get('rows') or []
+        if not isinstance(rows, list) or not rows:
+            return jsonify({'error': 'No rows submitted'}), 400
+
+        required = ['location_name', 'job_title', 'shift_date', 'start_time', 'end_time']
+        csv_rows = []
+        for idx, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                return jsonify({'error': f'Row {idx}: not an object'}), 400
+            for f in required:
+                if not (row.get(f) or '').strip():
+                    return jsonify({'error': f'Row {idx}: missing {f}'}), 400
+            csv_rows.append({
+                'employee_name': (row.get('employee_name') or '').strip(),
+                'job_title': row['job_title'].strip(),
+                'location_name': row['location_name'].strip(),
+                'shift_date': row['shift_date'].strip(),
+                'start_time': row['start_time'].strip(),
+                'end_time': row['end_time'].strip(),
+                'timezone_offset': (row.get('timezone_offset') or '').strip(),
+            })
+
+        db.set_pending_upload(session['user_id'], csv_rows)
+        session['upload_timestamp'] = datetime.now().isoformat()
+        return jsonify({
+            'success': True,
+            'row_count': len(csv_rows),
+            'message': f'{len(csv_rows)} rows staged for verification.',
+        })
+
+    return render_template(
+        'build_schedule.html',
+        locations=db.get_locations(),
+        jobs=db.get_jobs(),
+        team_members=db.get_team_members(),
+    )
+
 @app.route('/api/verify-preview', methods=['GET'])
 @login_required
 def verify_preview():

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Build Schedule - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Build Schedule</h1>
+
+<ol class="steps">
+    <li class="active">Build</li>
+    <li>Verify</li>
+    <li>Approve &amp; Process</li>
+</ol>
+
+<p class="subtle">Compose shift rows from your master data using searchable dropdowns. When you're ready, submit for verification &mdash; the same review and approval steps as a CSV upload.</p>
+
+<datalist id="dl-locations">
+    {% for l in locations %}<option value="{{ l.name }}"></option>{% endfor %}
+</datalist>
+<datalist id="dl-jobs">
+    {% for j in jobs %}<option value="{{ j.name }}"></option>{% endfor %}
+</datalist>
+<datalist id="dl-employees">
+    {% for m in team_members %}<option value="{{ m.name }}"></option>{% endfor %}
+</datalist>
+
+<section class="card">
+    <h2>Add a shift</h2>
+    <p class="subtle">Start typing to filter. Employee is optional &mdash; leave blank for an open shift. Timezone auto-populates from the selected location.</p>
+    <form id="shift-form">
+        <div class="form-row">
+            <label>
+                Location
+                <input type="text" id="f-location" list="dl-locations" placeholder="Location" required>
+            </label>
+            <label>
+                Job
+                <input type="text" id="f-job" list="dl-jobs" placeholder="Job" required>
+            </label>
+            <label>
+                Employee (optional)
+                <input type="text" id="f-employee" list="dl-employees" placeholder="Employee or blank">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>
+                Date
+                <input type="date" id="f-date" required>
+            </label>
+            <label>
+                Start
+                <input type="time" id="f-start" required>
+            </label>
+            <label>
+                End
+                <input type="time" id="f-end" required>
+            </label>
+            <button type="submit" class="btn primary">Add row</button>
+        </div>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Staged rows (<span id="row-count">0</span>)</h2>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>#</th><th>Location</th><th>Employee</th><th>Job</th><th>Date</th><th>Start</th><th>End</th><th>TZ</th><th></th></tr>
+            </thead>
+            <tbody id="staged-rows"></tbody>
+        </table>
+    </div>
+    <div class="actions">
+        <button id="submit-btn" class="btn primary" disabled>Submit for verification</button>
+    </div>
+    <div id="submit-status" class="status hidden"></div>
+</section>
+
+<section id="verify-section" class="card hidden">
+    <h2>Verify</h2>
+    <div id="verify-summary"></div>
+    <div class="table-wrap">
+        <table id="verify-table">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>Employee</th>
+                    <th>Job</th>
+                    <th>Location</th>
+                    <th>Date</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Status</th>
+                    <th>Errors</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div class="actions">
+        <button id="approve-btn" class="btn primary">Approve &amp; Send to Square</button>
+    </div>
+</section>
+
+<section id="results-section" class="card hidden">
+    <h2>Results</h2>
+    <div id="results-summary"></div>
+    <div class="table-wrap">
+        <table id="results-table">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>Status</th>
+                    <th>Shift ID</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</section>
+
+<script>
+window.LOCATION_TIMEZONES = {
+{% for l in locations %}    "{{ l.name|e }}": "{{ l.timezone or '-04:00' }}"{% if not loop.last %},{% endif %}
+{% endfor %}};
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/build.js') }}"></script>
+{% endblock %}

@@ -151,6 +151,13 @@ form input:focus { outline: none; border-color: #667eea; }
     font-size: 14px;
     color: #555;
 }
+.form-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: #555;
+}
 
 .table-wrap { overflow-x: auto; }
 
