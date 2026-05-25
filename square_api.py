@@ -228,7 +228,11 @@ class SquareAPI:
     
     def list_jobs(self):
         """
-        List all jobs from Square Labor API, paginating through all results.
+        List all jobs from Square Team API, paginating through all results.
+
+        Square moved the Jobs resource out of the Labor API into the Team API
+        as of Square-Version 2024-12-18; the endpoint is now
+        GET /v2/team-members/jobs.
 
         Returns:
             {'success': bool, 'jobs': list, 'error': str (if failed)}
@@ -238,18 +242,14 @@ class SquareAPI:
             if not self.access_token or self.access_token.startswith('YOUR_'):
                 return {'success': False, 'error': 'Square API token not configured.'}
 
+            url = self.base_url.replace('/v2/labor', '/v2/team-members/jobs')
             jobs = []
             cursor = None
             while True:
                 params = {}
                 if cursor:
                     params['cursor'] = cursor
-                response = requests.get(
-                    f'{self.base_url}/jobs',
-                    headers=self.headers,
-                    params=params,
-                    timeout=15,
-                )
+                response = requests.get(url, headers=self.headers, params=params, timeout=15)
                 if response.status_code != 200:
                     error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
                     return {'success': False, 'error': f'Square API Error: {error_msg}'}
