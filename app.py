@@ -22,8 +22,16 @@ from database import Database
 from square_api import SquareAPI
 
 # Initialize Flask app
+_secret_key = os.environ.get('SECRET_KEY', '').strip()
+if not _secret_key or _secret_key == 'dev-secret-key-change-in-production':
+    raise RuntimeError(
+        "SECRET_KEY environment variable is required and must not be the default value. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\" "
+        "and pass it to the container via --env-file or -e SECRET_KEY=..."
+    )
+
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.secret_key = _secret_key
 CORS(app)
 
 # Initialize database and Square API
