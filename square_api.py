@@ -134,14 +134,17 @@ class SquareAPI:
                 timeout=10
             )
             
-            if response.status_code == 201:
+            if response.ok:
                 data = response.json()
                 return {
                     'success': True,
                     'shift_id': data['scheduled_shift']['id']
                 }
             else:
-                error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                try:
+                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                except ValueError:
+                    error_msg = response.text
                 return {
                     'success': False,
                     'error': f"Square API Error: {error_msg}"
@@ -177,12 +180,15 @@ class SquareAPI:
                 timeout=10
             )
             
-            if response.status_code == 200:
+            if response.ok:
                 return {'success': True}
             else:
-                error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                try:
+                    error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                except ValueError:
+                    error_msg = response.text
                 return {'success': False, 'error': f"Square API Error: {error_msg}"}
-        
+
         except requests.exceptions.Timeout:
             return {'success': False, 'error': 'API request timed out'}
         except requests.exceptions.ConnectionError:
