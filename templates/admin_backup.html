@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Backup &amp; Restore - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>Backup &amp; Restore</h1>
+<p class="subtle">The entire app database lives in a single SQLite file. Download it to keep a copy; restore one to roll back.</p>
+
+<section class="card">
+    <h2>Download backup</h2>
+    <p class="subtle">Saves a consistent snapshot of <code>schedules.db</code> to your computer. Includes users, locations, jobs, team members, upload history, and settings.</p>
+    <a class="btn primary" href="{{ url_for('backup_download') }}">Download backup</a>
+</section>
+
+<section class="card">
+    <h2>Restore from backup</h2>
+    <p class="subtle">Replaces the current database with an uploaded backup file. The current database is saved to <code>schedules.db.pre-restore.bak</code> before being overwritten.</p>
+    <p class="subtle"><strong>Warning:</strong> all current data (including your login) will be replaced with the contents of the uploaded file. You will need to log in again with credentials from the restored backup.</p>
+
+    <form id="restore-form" enctype="multipart/form-data">
+        <input type="file" id="restore-file" name="file" accept=".db,application/octet-stream" required>
+        <button type="submit" class="btn danger">Restore</button>
+    </form>
+
+    <div id="restore-status" class="status hidden"></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('restore-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('restore-file');
+    const statusEl = document.getElementById('restore-status');
+    if (!fileInput.files.length) return;
+
+    if (!confirm('This will replace ALL current data. Continue?')) return;
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    statusEl.textContent = 'Restoring...';
+    statusEl.className = 'status';
+
+    try {
+        const res = await fetch('{{ url_for("backup_restore") }}', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = data.error || 'Restore failed';
+            statusEl.className = 'status error';
+            return;
+        }
+        statusEl.textContent = data.message + ' Redirecting to login...';
+        statusEl.className = 'status success';
+        setTimeout(() => { window.location.href = '{{ url_for("logout") }}'; }, 1500);
+    } catch (err) {
+        statusEl.textContent = 'Restore failed: ' + err.message;
+        statusEl.className = 'status error';
+    }
+});
+</script>
+{% endblock %}
