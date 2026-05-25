@@ -3,11 +3,15 @@ Square Schedule Manager
 Main Flask Application
 """
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response, send_file
 from flask_cors import CORS
 import os
 import csv
+import io
 import json
+import shutil
+import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -230,6 +234,28 @@ def upload():
             return jsonify({'error': str(e)}), 400
     
     return render_template('upload.html')
+
+@app.route('/upload/template', methods=['GET'])
+@login_required
+def upload_template():
+    """Download a CSV template with required headers and sample rows."""
+    headers = ['employee_name', 'job_title', 'location_name', 'shift_date', 'start_time', 'end_time', 'timezone_offset']
+    sample_rows = [
+        ['Jane Doe', 'Barista', 'Main Street', '2026-06-01', '09:00', '17:00', '-04:00'],
+        ['John Smith', 'Manager', 'Main Street', '2026-06-01', '08:00', '16:00', '-04:00'],
+        ['Alex Johnson', 'Barista', 'Downtown', '2026-06-01', '12:00', '20:00', '-04:00'],
+    ]
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(sample_rows)
+
+    return Response(
+        buffer.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="schedule_template.csv"'},
+    )
 
 @app.route('/api/verify-preview', methods=['GET'])
 @login_required
@@ -513,6 +539,99 @@ def set_environment():
         'environment': creds['environment'],
         'token_configured': bool(creds['access_token']),
     })
+
+
+@app.route('/admin/backup', methods=['GET'])
+@login_required
+def backup_page():
+    """Admin-only backup & restore page."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    return render_template('admin_backup.html')
+
+
+@app.route('/admin/backup/download', methods=['GET'])
+@login_required
+def backup_download():
+    """Stream a consistent snapshot of the SQLite database as a download."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    from database import DB_PATH
+    tmp = tempfile.NamedTemporaryFile(prefix='schedules-backup-', suffix='.db', delete=False)
+    tmp.close()
+    try:
+        src = sqlite3.connect(DB_PATH)
+        dst = sqlite3.connect(tmp.name)
+        with dst:
+            src.backup(dst)
+        dst.close()
+        src.close()
+
+        filename = f"schedules-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+        return send_file(
+            tmp.name,
+            mimetype='application/octet-stream',
+            as_attachment=True,
+            download_name=filename,
+        )
+    except Exception as e:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return jsonify({'error': f'Backup failed: {e}'}), 500
+
+
+@app.route('/admin/backup/restore', methods=['POST'])
+@login_required
+def backup_restore():
+    """Replace the current SQLite database with an uploaded backup file."""
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+
+    tmp = tempfile.NamedTemporaryFile(prefix='schedules-restore-', suffix='.db', delete=False)
+    try:
+        file.save(tmp.name)
+        tmp.close()
+
+        with open(tmp.name, 'rb') as f:
+            header = f.read(16)
+        if not header.startswith(b'SQLite format 3'):
+            return jsonify({'error': 'File is not a valid SQLite database'}), 400
+
+        try:
+            check = sqlite3.connect(tmp.name)
+            cursor = check.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row[0] for row in cursor.fetchall()}
+            check.close()
+        except sqlite3.DatabaseError as e:
+            return jsonify({'error': f'Could not open backup: {e}'}), 400
+
+        required_tables = {'users', 'locations', 'jobs', 'team_members', 'uploads', 'schedules', 'settings'}
+        missing = required_tables - tables
+        if missing:
+            return jsonify({'error': f'Backup is missing expected tables: {", ".join(sorted(missing))}'}), 400
+
+        from database import DB_PATH
+        if os.path.exists(DB_PATH):
+            shutil.copy2(DB_PATH, DB_PATH + '.pre-restore.bak')
+        shutil.move(tmp.name, DB_PATH)
+
+        return jsonify({'success': True, 'message': 'Database restored. Please log in again.'})
+    except Exception as e:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return jsonify({'error': f'Restore failed: {e}'}), 500
 
 
 @app.route('/api/health', methods=['GET'])
