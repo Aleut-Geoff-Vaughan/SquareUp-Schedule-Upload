@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}AI Convert - Square Schedule Manager{% endblock %}
+
+{% block content %}
+<h1>AI Convert</h1>
+<p class="subtle">Upload a messy schedule file (.csv / .tsv / .txt) and let a local Ollama model normalize it into the import CSV format. The AI's output appears below in an editable preview &mdash; review, tweak, then stage for verification.</p>
+<p class="subtle">Need to use Claude or another cloud model instead? <a href="{{ url_for('master_data_md') }}">Download the master data as Markdown</a> and paste it as context along with your messy file.</p>
+
+<section class="card">
+    <h2>Ollama settings</h2>
+    <p class="subtle">Ollama runs on your host machine. From Docker on Windows/Mac the container reaches it via <code>http://host.docker.internal:11434</code>. On Linux you may need <code>--add-host host.docker.internal:host-gateway</code> when starting the container.</p>
+    <form id="ollama-form">
+        <div class="form-row">
+            <label>
+                Host URL
+                <input type="text" id="ollama-host" value="{{ ollama_host }}" placeholder="{{ ollama_default_host }}" required>
+            </label>
+            <label>
+                Model
+                <input type="text" id="ollama-model" value="{{ ollama_model }}" placeholder="{{ ollama_default_model }}" required>
+            </label>
+            <button type="submit" class="btn primary">Save</button>
+            <button type="button" id="test-btn" class="btn">Test connection</button>
+        </div>
+        <div id="ollama-status" class="status hidden"></div>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Convert a messy schedule</h2>
+    <form id="convert-form" enctype="multipart/form-data">
+        <input type="file" id="convert-file" name="file" accept=".csv,.tsv,.txt" required>
+        <button type="submit" class="btn primary">Send to Ollama</button>
+    </form>
+    <p class="subtle">Larger files = longer wait. Conversions usually take 10-60 seconds depending on your model.</p>
+    <div id="convert-status" class="status hidden"></div>
+</section>
+
+<section id="preview-section" class="card hidden">
+    <h2>AI output (editable)</h2>
+    <p class="subtle">Review the model's output below. Fix anything that's off (typos in names, bad dates, etc.), then stage it &mdash; that runs the same Verify &rarr; Approve flow as a normal upload.</p>
+    <textarea id="csv-preview" rows="14" style="width:100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;"></textarea>
+    <div class="actions">
+        <button id="download-btn" type="button" class="btn">Download CSV</button>
+        <button id="stage-btn" type="button" class="btn primary">Stage for verification</button>
+    </div>
+    <div id="stage-status" class="status hidden"></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/ai_convert.js') }}"></script>
+{% endblock %}

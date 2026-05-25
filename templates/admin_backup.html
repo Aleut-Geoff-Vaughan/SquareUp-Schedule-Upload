@@ -12,6 +12,12 @@
 </section>
 
 <section class="card">
+    <h2>Export master data (Markdown)</h2>
+    <p class="subtle">Download locations, jobs, and team members as a Markdown file. Use it as context when asking Claude or another LLM to convert a messy schedule into the import CSV format.</p>
+    <a class="btn" href="{{ url_for('master_data_md') }}">Download master data (.md)</a>
+</section>
+
+<section class="card">
     <h2>Restore from backup</h2>
     <p class="subtle">Replaces the current database with an uploaded backup file. The current database is saved to <code>schedules.db.pre-restore.bak</code> before being overwritten.</p>
     <p class="subtle"><strong>Warning:</strong> all current data (including your login) will be replaced with the contents of the uploaded file. You will need to log in again with credentials from the restored backup.</p>

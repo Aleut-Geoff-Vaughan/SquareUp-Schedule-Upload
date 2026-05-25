@@ -127,4 +127,10 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
     }
+
+    // If a previous flow (AI convert, etc.) staged rows and redirected here, auto-show verify.
+    if (new URLSearchParams(window.location.search).get('staged') === '1') {
+        setStatus('Loading staged rows for verification...', 'info');
+        loadVerifyPreview();
+    }
 })();

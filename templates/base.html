@@ -30,6 +30,9 @@
                 <a href="{{ url_for('dashboard') }}">Dashboard</a>
                 <a href="{{ url_for('upload') }}">Upload</a>
                 <a href="{{ url_for('upload_build') }}">Build</a>
+                {% if session.get('is_admin') %}
+                <a href="{{ url_for('ai_convert_page') }}">AI Convert</a>
+                {% endif %}
                 <a href="{{ url_for('history') }}">History</a>
                 {% if session.get('is_admin') %}
                 <a href="{{ url_for('locations') }}">Locations</a>
