@@ -232,6 +232,63 @@ class SquareAPI:
             'shift_id': shift_id
         }
     
+    def search_scheduled_shifts(self, location_ids=None, start_at=None, end_at=None):
+        """
+        Search scheduled shifts via POST /v2/labor/scheduled-shifts/search.
+
+        Args:
+            location_ids: optional list of Square location IDs to filter to.
+            start_at: ISO 8601 start of the date range (e.g. '2026-05-25T00:00:00Z').
+            end_at: ISO 8601 end of the date range.
+
+        Returns:
+            {'success': bool, 'scheduled_shifts': list, 'error': str (if failed)}
+        """
+        try:
+            self._update_token()
+            if not self.access_token or self.access_token.startswith('YOUR_'):
+                return {'success': False, 'error': 'Square API token not configured.'}
+
+            url = f'{self.base_url}/scheduled-shifts/search'
+            query_filter = {}
+            if location_ids:
+                query_filter['location_ids'] = list(location_ids)
+            if start_at and end_at:
+                query_filter['start_at_range'] = {'start_at': start_at, 'end_at': end_at}
+
+            shifts = []
+            cursor = None
+            while True:
+                body = {'limit': 200}
+                if query_filter:
+                    body['query'] = {'filter': query_filter}
+                if cursor:
+                    body['cursor'] = cursor
+
+                response = requests.post(url, headers=self.headers, json=body, timeout=15)
+                if not response.ok:
+                    try:
+                        error_msg = response.json().get('errors', [{}])[0].get('detail', response.text)
+                    except ValueError:
+                        error_msg = response.text
+                    return {'success': False, 'error': f'Square API Error: {error_msg}'}
+
+                data = response.json()
+                shifts.extend(data.get('scheduled_shifts', []))
+                cursor = data.get('cursor')
+                if not cursor:
+                    break
+
+            return {'success': True, 'scheduled_shifts': shifts}
+
+        except requests.exceptions.Timeout:
+            return {'success': False, 'error': 'API request timed out'}
+        except requests.exceptions.ConnectionError:
+            return {'success': False, 'error': 'Connection error'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+
     def list_locations(self):
         """
         List all locations from Square via GET /v2/locations.

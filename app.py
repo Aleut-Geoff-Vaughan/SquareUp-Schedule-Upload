@@ -903,6 +903,97 @@ def process_schedules():
         'results': results
     })
 
+# ==================== CURRENT SCHEDULE (LIVE FROM SQUARE) ====================
+
+@app.route('/schedule', methods=['GET'])
+@login_required
+def schedule_view():
+    """Live view of scheduled shifts in Square for a date range, cross-referenced
+    with the local schedules table so the user can tell which shifts came from
+    this app and which were created elsewhere."""
+    return render_template('schedule.html', locations=db.get_locations())
+
+
+@app.route('/api/schedule/fetch', methods=['POST'])
+@login_required
+def schedule_fetch():
+    """Pull scheduled shifts from Square for the given date range.
+
+    Body: { start_date: 'YYYY-MM-DD', end_date: 'YYYY-MM-DD', location_id?: '...' }
+    Returns rows enriched with local lookup names and a source marker
+    (App = uploaded from this app, External = created elsewhere in Square).
+    """
+    data = request.get_json(silent=True) or {}
+    start_date = (data.get('start_date') or '').strip()
+    end_date = (data.get('end_date') or '').strip()
+    location_id = (data.get('location_id') or '').strip()
+    if not start_date or not end_date:
+        return jsonify({'error': 'start_date and end_date are required (YYYY-MM-DD)'}), 400
+
+    try:
+        # Use a wide UTC window so we don't miss shifts in any timezone.
+        start_at = f'{start_date}T00:00:00Z'
+        end_at = f'{end_date}T23:59:59Z'
+    except Exception as e:
+        return jsonify({'error': f'Bad date: {e}'}), 400
+
+    location_ids = [location_id] if location_id else None
+    result = square.search_scheduled_shifts(
+        location_ids=location_ids,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    if not result.get('success'):
+        return jsonify({'error': result.get('error')}), 502
+
+    # Build lookup maps from local master data for human-readable names.
+    locs_by_id = {l['square_location_id']: l['name'] for l in db.get_locations()}
+    jobs_by_id = {j['square_job_id']: j['name'] for j in db.get_jobs()}
+    members_by_id = {m['square_team_member_id']: m['name'] for m in db.get_team_members()}
+
+    # Pull all local schedules into a set of Square shift IDs we've uploaded.
+    local_shift_ids = set()
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT square_shift_id FROM schedules WHERE square_shift_id IS NOT NULL')
+        for row in cursor.fetchall():
+            local_shift_ids.add(row[0])
+
+    rows = []
+    for s in result['scheduled_shifts']:
+        details = s.get('draft_shift_details') or s.get('shift_details') or {}
+        sid = s.get('id')
+        location_sid = details.get('location_id')
+        job_sid = details.get('job_id')
+        member_sid = details.get('team_member_id')
+        rows.append({
+            'square_shift_id': sid,
+            'start_at': details.get('start_at'),
+            'end_at': details.get('end_at'),
+            'timezone': details.get('timezone'),
+            'location_id': location_sid,
+            'location_name': locs_by_id.get(location_sid, '(unknown)'),
+            'job_id': job_sid,
+            'job_title': jobs_by_id.get(job_sid, '(unknown)'),
+            'team_member_id': member_sid,
+            'team_member_name': members_by_id.get(member_sid, '(open / unknown)') if member_sid else '(open)',
+            'source': 'App' if sid in local_shift_ids else 'External',
+            'is_deleted': details.get('is_deleted', False),
+            'version': s.get('version'),
+        })
+
+    # Sort by start time
+    rows.sort(key=lambda r: r.get('start_at') or '')
+
+    return jsonify({
+        'success': True,
+        'count': len(rows),
+        'app_count': sum(1 for r in rows if r['source'] == 'App'),
+        'external_count': sum(1 for r in rows if r['source'] == 'External'),
+        'shifts': rows,
+    })
+
+
 # ==================== HISTORY & AUDIT ====================
 
 @app.route('/history')
