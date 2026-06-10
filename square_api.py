@@ -287,7 +287,9 @@ class SquareAPI:
             shifts = []
             cursor = None
             while True:
-                body = {'limit': 200}
+                # Square caps the scheduled-shifts search at 50 per page. Pagination via cursor
+                # is what gets us the full date range.
+                body = {'limit': 50}
                 if query_filter:
                     body['query'] = {'filter': query_filter}
                 if cursor:

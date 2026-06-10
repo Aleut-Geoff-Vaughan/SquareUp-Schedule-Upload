@@ -169,3 +169,23 @@ def test_error_message_includes_field_name(logged_in, monkeypatch):
     assert "Field must not be blank" in result["error"]
     assert "team_member_id" in result["error"]
     assert "VALUE_NOT_BLANK_VIOLATION" in result["error"]
+
+
+def test_search_scheduled_shifts_uses_max_50_limit(logged_in, monkeypatch):
+    """Square's scheduled-shifts search caps `limit` at 50. Anything higher
+    is rejected with VALUE_TOO_HIGH."""
+    monkeypatch.setenv("SQUARE_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("SANDBOX_ACCESS_TOKEN", "fake-token")
+    api = logged_in.application_module.square
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.setdefault('bodies', []).append(json)
+        return _make_response(200, {"scheduled_shifts": []})
+
+    with patch("square_api.requests.post", side_effect=fake_post):
+        api.search_scheduled_shifts(start_at="2026-05-25T00:00:00Z", end_at="2026-05-30T23:59:59Z")
+
+    assert captured['bodies'], "expected at least one request"
+    assert captured['bodies'][0]['limit'] == 50
