@@ -1,44 +1,40 @@
 # Dockerfile for Square Schedule Manager
-# Multi-stage build for efficient deployment
-
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements
+# Install Python dependencies first for better layer caching. No build
+# toolchain is needed — every dependency ships wheels.
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY app.py .
-COPY database.py .
-COPY square_api.py .
-COPY ollama_client.py .
+# Application files
+COPY app.py wsgi.py database.py square_api.py ollama_client.py security.py timezones.py scheduler.py ./
 COPY templates/ templates/
 COPY static/ static/
 
-# Create volumes for data persistence
+# Data + uploads live on volumes so they survive container recreation.
+RUN mkdir -p /app/data /app/uploads /app/data/backups
 VOLUME /app/data
 VOLUME /app/uploads
 
-# Expose port
 EXPOSE 5000
 
-# Set environment variables
-ENV FLASK_ENV=production
-ENV DB_PATH=/app/data/schedules.db
+ENV FLASK_ENV=production \
+    DB_PATH=/app/data/schedules.db \
+    BACKUP_DIR=/app/data/backups \
+    GUNICORN_WORKERS=2
 
-# Health check
+# Run as a non-root user. Own the app + data dirs so SQLite can write.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# Healthcheck hits the unauthenticated liveness endpoint using stdlib only
+# (no curl in the slim image) and treats a non-200 as unhealthy.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:5000/login')" || exit 1
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/healthz', timeout=5).status==200 else 1)" || exit 1
 
-# Run application
-CMD ["python", "app.py"]
+# Production WSGI server (not the Flask dev server). wsgi:application bootstraps
+# an initial admin on first start.
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:5000 --workers ${GUNICORN_WORKERS:-2} --timeout 120 --access-logfile - wsgi:application"]

@@ -9,7 +9,27 @@ env:
   IMAGE_NAME: geoffvaughan/square-schedule-upload
 
 jobs:
+  # Gate publishing on a green test run so a broken image never reaches :latest.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        env:
+          SECRET_KEY: ci-smoke-key-not-secret-0123456789abcdef0123456789
+        run: pytest -q
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

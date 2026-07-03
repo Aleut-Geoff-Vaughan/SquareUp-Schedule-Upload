@@ -5,6 +5,14 @@
 <h1>Upload History</h1>
 
 <section class="card">
+    <h2>Recent changes</h2>
+    <p class="subtle">Compares the two most recent completed uploads.</p>
+    <button id="changes-btn" type="button" class="btn">Show changes</button>
+    <div id="changes-status" class="status hidden"></div>
+    <div id="changes-output"></div>
+</section>
+
+<section class="card">
     {% if uploads %}
     <div class="table-wrap">
         <table>
@@ -18,6 +26,7 @@
                     <th>Status</th>
                     <th>Created</th>
                     <th>Processed</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -31,6 +40,12 @@
                     <td><span class="badge {{ u.status|lower }}">{{ u.status }}</span></td>
                     <td>{{ u.created_at }}</td>
                     <td>{{ u.processed_at or '-' }}</td>
+                    <td>
+                        <a class="btn" href="{{ url_for('upload_report', upload_id=u.id) }}">Report</a>
+                        {% if u.error_count and u.error_count > 0 %}
+                        <button class="btn primary retry-btn" data-id="{{ u.id }}">Retry failed</button>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -40,4 +55,58 @@
     <p class="subtle">No uploads yet. <a href="{{ url_for('upload') }}">Upload your first schedule.</a></p>
     {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.retry-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        if (!confirm('Re-stage the failed rows from upload ' + id + ' for verification?')) return;
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/upload/' + id + '/retry-failed', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                alert(data.error || 'Retry failed');
+                btn.disabled = false;
+                return;
+            }
+            window.location.href = data.redirect || '/upload';
+        } catch (err) {
+            alert('Retry failed: ' + err.message);
+            btn.disabled = false;
+        }
+    });
+});
+
+document.getElementById('changes-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('changes-status');
+    const output = document.getElementById('changes-output');
+    statusEl.className = 'status';
+    statusEl.textContent = 'Loading...';
+    output.innerHTML = '';
+    try {
+        const res = await fetch('/api/changes');
+        const data = await res.json();
+        const changes = data.changes || { added: [], removed: [] };
+        statusEl.textContent = (changes.added.length + changes.removed.length === 0)
+            ? 'No differences between the last two completed uploads.'
+            : changes.added.length + ' added, ' + changes.removed.length + ' removed.';
+        function list(title, rows) {
+            if (!rows.length) return '';
+            let html = '<h3>' + title + '</h3><ul>';
+            for (const s of rows) {
+                html += '<li>' + (s.shift_date || '') + ' ' + (s.start_time || '') +
+                        ' @ ' + (s.location_id || '') + '</li>';
+            }
+            return html + '</ul>';
+        }
+        output.innerHTML = list('Added', changes.added) + list('Removed', changes.removed);
+    } catch (err) {
+        statusEl.textContent = 'Failed: ' + err.message;
+        statusEl.className = 'status error';
+    }
+});
+</script>
 {% endblock %}

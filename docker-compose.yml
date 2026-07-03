@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   square-scheduler:
     build:
@@ -10,20 +8,32 @@ services:
       - "5000:5000"
     environment:
       FLASK_ENV: production
-      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-in-production}
+      # REQUIRED. No default — the app refuses to start without a strong key,
+      # so an unconfigured deployment fails closed instead of running with a
+      # publicly-known secret. Generate one with:
+      #   python -c "import secrets; print(secrets.token_hex(32))"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set (see .env.example)}
       SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
-      SANDBOX_ACCESS_TOKEN: ${SANDBOX_ACCESS_TOKEN}
-      SANDBOX_APPLICATION_ID: ${SANDBOX_APPLICATION_ID}
-      PRODUCTION_ACCESS_TOKEN: ${PRODUCTION_ACCESS_TOKEN}
-      PRODUCTION_APPLICATION_ID: ${PRODUCTION_APPLICATION_ID}
-      SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN}
+      SANDBOX_ACCESS_TOKEN: ${SANDBOX_ACCESS_TOKEN:-}
+      SANDBOX_APPLICATION_ID: ${SANDBOX_APPLICATION_ID:-}
+      PRODUCTION_ACCESS_TOKEN: ${PRODUCTION_ACCESS_TOKEN:-}
+      PRODUCTION_APPLICATION_ID: ${PRODUCTION_APPLICATION_ID:-}
+      SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN:-}
       DB_PATH: /app/data/schedules.db
+      BACKUP_DIR: /app/data/backups
+      # Optional automation (off unless set). Run a single worker if enabling.
+      AUTO_SYNC_HOURS: ${AUTO_SYNC_HOURS:-0}
+      AUTO_BACKUP_HOURS: ${AUTO_BACKUP_HOURS:-0}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      # Optional first-run admin password (else a random one is logged once).
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/login"]
+      # Stdlib-only probe (no curl in the slim image).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/healthz', timeout=5).status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3

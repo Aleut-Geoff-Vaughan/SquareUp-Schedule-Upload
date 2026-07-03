@@ -10,7 +10,10 @@ def client(monkeypatch):
     tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp_db.close()
     monkeypatch.setenv("DB_PATH", tmp_db.name)
-    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    # SECRET_KEY guard now requires >= 32 chars and rejects known placeholders.
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-for-pytest-only-0123456789abcdef")
+    # Test client speaks HTTP, so don't require Secure cookies (they'd be dropped).
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "0")
 
     # Force reimport so module-level Database() picks up our DB_PATH
     for mod in ("app", "database", "square_api"):

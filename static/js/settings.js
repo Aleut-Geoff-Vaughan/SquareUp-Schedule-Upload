@@ -13,8 +13,8 @@
         const body = { action: 'add', name };
         body[config.idField] = squareId;
 
-        const tzEl = document.getElementById('timezone');
-        if (tzEl) body.timezone = tzEl.value;
+        const tzNameEl = document.getElementById('timezone_name');
+        if (tzNameEl) body.timezone_name = tzNameEl.value;
 
         const res = await fetch(config.endpoint, {
             method: 'POST',
