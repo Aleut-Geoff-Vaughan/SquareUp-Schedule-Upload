@@ -178,6 +178,25 @@ def test_admin_reset_password(logged_in):
         "resetpass1", app_module.db.get_user_by_id(uid)["password_hash"])
 
 
+def test_upload_endpoints_enforce_ownership(client):
+    """A non-admin cannot read, export, or retry another user's upload."""
+    app_module = client.application_module
+    db = app_module.db
+    # An upload created by 'admin'.
+    upload_id = db.create_upload_record(1, "admin")
+    db.add_upload_result(upload_id, 2, "ERROR", None, "boom",
+                         {"employee_name": "Secret Person", "job_title": "X",
+                          "location_name": "Y", "shift_date": "2026-06-01",
+                          "start_time": "09:00", "end_time": "17:00"})
+    # Log in as a different, non-admin user.
+    db.add_user("mallory", app_module.hash_password("password1"), is_admin=False)
+    client.post("/login", data={"username": "mallory", "password": "password1"})
+
+    assert client.get(f"/api/upload/{upload_id}").status_code == 403
+    assert client.get(f"/api/upload/{upload_id}/report.csv").status_code == 403
+    assert client.post(f"/api/upload/{upload_id}/retry-failed").status_code == 403
+
+
 def test_cannot_delete_last_admin(logged_in):
     app_module = logged_in.application_module
     admin = app_module.db.get_user("admin")
@@ -230,6 +249,31 @@ def test_schedule_fetch_uses_wide_timezone_window(logged_in, monkeypatch):
     resp = logged_in.post("/api/schedule/fetch",
                           json={"start_date": "2026-06-01", "end_date": "2026-06-07"})
     assert resp.status_code == 200
-    # Widest offsets so no local-day shift is cut off by a UTC boundary.
-    assert captured["start_at"] == "2026-06-01T00:00:00-14:00"
-    assert captured["end_at"] == "2026-06-07T23:59:59+14:00"
+    # Widest window so no local-day shift is cut off by a UTC boundary:
+    # start at UTC+14 (earliest local midnight), end at UTC-14 (latest local
+    # end-of-day). The range must be well-ordered (start UTC < end UTC).
+    assert captured["start_at"] == "2026-06-01T00:00:00+14:00"
+    assert captured["end_at"] == "2026-06-07T23:59:59-14:00"
+
+
+def test_schedule_fetch_window_is_well_ordered_single_day(logged_in, monkeypatch):
+    """Regression: the window must be a valid (start < end) UTC range even for a
+    single-day query, or Square returns nothing."""
+    from datetime import datetime
+    captured = {}
+
+    def fake_search(location_ids=None, start_at=None, end_at=None):
+        captured["start_at"] = start_at
+        captured["end_at"] = end_at
+        return {"success": True, "scheduled_shifts": []}
+
+    monkeypatch.setattr(logged_in.application_module.square,
+                        "search_scheduled_shifts", fake_search)
+    logged_in.post("/api/schedule/fetch",
+                   json={"start_date": "2026-07-03", "end_date": "2026-07-03"})
+    start = datetime.fromisoformat(captured["start_at"])
+    end = datetime.fromisoformat(captured["end_at"])
+    assert start < end, f"inverted window: {captured['start_at']} !< {captured['end_at']}"
+    # And a normal Eastern 9am shift that day must fall inside the window.
+    shift = datetime.fromisoformat("2026-07-03T09:00:00-04:00")
+    assert start <= shift <= end

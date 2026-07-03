@@ -7,6 +7,7 @@ import requests
 import os
 import time
 import hashlib
+import threading
 from contextlib import contextmanager
 
 
@@ -76,6 +77,10 @@ def resolve_credentials():
 class SquareAPI:
     def __init__(self):
         self._frozen = False
+        # Serializes credential freezes so two concurrent batches (under a
+        # threaded WSGI worker) can't interleave the freeze/restore and leave
+        # one batch running unfrozen against a mid-flight environment flip.
+        self._freeze_lock = threading.RLock()
         self._apply(resolve_credentials())
 
     def _apply(self, creds):
@@ -105,15 +110,17 @@ class SquareAPI:
 
         Snapshots the currently-resolved environment/token and pins them so
         every call in the block targets the same environment even if the
-        global env var changes. Restores the prior mode on exit.
+        global env var changes. Held under a lock so concurrent batches are
+        serialized rather than interleaving their freeze/restore state.
         """
-        self._apply(resolve_credentials())
-        previous = self._frozen
-        self._frozen = True
-        try:
-            yield {'environment': self.environment, 'host': self.base_url}
-        finally:
-            self._frozen = previous
+        with self._freeze_lock:
+            self._apply(resolve_credentials())
+            previous = self._frozen
+            self._frozen = True
+            try:
+                yield {'environment': self.environment, 'host': self.base_url}
+            finally:
+                self._frozen = previous
 
     def token_missing(self):
         return not self.access_token or self.access_token.startswith('YOUR_')

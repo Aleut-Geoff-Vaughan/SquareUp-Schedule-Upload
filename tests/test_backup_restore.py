@@ -104,7 +104,8 @@ def test_migration_upgrades_legacy_db_in_place(tmp_path, monkeypatch):
         CREATE TABLE schedules (id INTEGER PRIMARY KEY, upload_id INTEGER, square_shift_id TEXT, location_id TEXT, job_id TEXT, team_member_id TEXT, shift_date DATE, start_time TIME, end_time TIME, created_at TIMESTAMP);
         CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP);
         CREATE TABLE pending_uploads (user_id INTEGER PRIMARY KEY, csv_data TEXT, created_at TIMESTAMP);
-        INSERT INTO locations (name, square_location_id, timezone) VALUES ('Old', 'L_OLD', '-05:00');
+        INSERT INTO locations (name, square_location_id, timezone) VALUES ('East', 'L_EAST', '-04:00');
+        INSERT INTO locations (name, square_location_id, timezone) VALUES ('Ambig', 'L_AMBIG', '-05:00');
         """
     )
     conn.commit()
@@ -123,9 +124,13 @@ def test_migration_upgrades_legacy_db_in_place(tmp_path, monkeypatch):
         assert "timezone_name" in cols
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "upload_results" in tables
-        # -05:00 was backfilled to a Central IANA name.
-        row = conn.execute("SELECT timezone_name FROM locations WHERE square_location_id='L_OLD'").fetchone()
-        assert row[0] == "America/Chicago"
+        # -04:00 (the app's Eastern default) is safely backfilled to Eastern.
+        east = conn.execute("SELECT timezone_name FROM locations WHERE square_location_id='L_EAST'").fetchone()
+        assert east[0] == "America/New_York"
+        # -05:00 is ambiguous (Eastern EST vs Central CDT) so it's left NULL and
+        # keeps using its stored fixed offset — no guessed one-hour shift.
+        ambig = conn.execute("SELECT timezone_name FROM locations WHERE square_location_id='L_AMBIG'").fetchone()
+        assert ambig[0] is None
 
     # Restore the module for other tests.
     importlib.reload(database)

@@ -188,9 +188,9 @@ def login():
     return render_template('login.html')
 
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 def logout():
-    """Logout"""
+    """Logout (POST + CSRF so it can't be triggered cross-site via an <img>)."""
     session.clear()
     return redirect(url_for('login'))
 
@@ -1065,8 +1065,8 @@ def verify_duplicates():
     if not dates:
         return jsonify({'success': True, 'duplicates': []})
 
-    start_at = f'{min(dates)}T00:00:00-14:00'
-    end_at = f'{max(dates)}T23:59:59+14:00'
+    start_at = f'{min(dates)}T00:00:00+14:00'
+    end_at = f'{max(dates)}T23:59:59-14:00'
     result = square.search_scheduled_shifts(start_at=start_at, end_at=end_at)
     if not result.get('success'):
         return jsonify({'error': result.get('error')}), 502
@@ -1193,17 +1193,22 @@ def process_schedules():
     if not data.get('approve'):
         return jsonify({'error': 'Approval required'}), 400
 
-    csv_data = db.get_pending_upload(session['user_id'])
+    # Atomically claim the staged rows. A second concurrent/duplicate click
+    # gets nothing back and is rejected, so the batch can't be published twice
+    # (the claim's DELETE-rowcount guard makes this safe across processes).
+    csv_data = db.claim_pending_upload(session['user_id'])
     if not csv_data:
         return jsonify({'error': 'No pending upload'}), 400
-
-    # Double-submit guard: clear the staged upload up-front and hold the rows
-    # locally. A second concurrent/duplicate click finds nothing staged and is
-    # rejected, so the batch can't be published twice.
-    db.clear_pending_upload(session['user_id'])
     session.pop('upload_timestamp', None)
 
-    payload = _process_rows(csv_data, session.get('username'), source='upload')
+    try:
+        payload = _process_rows(csv_data, session.get('username'), source='upload')
+    except Exception:
+        # Infrastructure failure around the batch (e.g. DB error): re-stage the
+        # claimed rows so the work isn't lost. Content-based idempotency keys
+        # make a later retry safe against double-publishing.
+        db.set_pending_upload(session['user_id'], csv_data)
+        raise
     return jsonify(payload)
 
 
@@ -1228,10 +1233,13 @@ def schedule_fetch():
     if not _valid_date(start_date) or not _valid_date(end_date):
         return jsonify({'error': 'start_date and end_date are required (YYYY-MM-DD)'}), 400
 
-    # Use the widest possible timezone window (±14:00) so a shift late on the
-    # last local day of the range is never cut off by a UTC 'Z' boundary.
-    start_at = f'{start_date}T00:00:00-14:00'
-    end_at = f'{end_date}T23:59:59+14:00'
+    # Widen the window to cover every timezone so a shift late on the last
+    # local day of the range is never cut off by a UTC 'Z' boundary. The
+    # earliest a local start-of-day occurs is in UTC+14; the latest a local
+    # end-of-day occurs is in UTC-14 — so start uses +14:00 and end uses -14:00
+    # (using the opposite signs would produce a too-narrow, inverted window).
+    start_at = f'{start_date}T00:00:00+14:00'
+    end_at = f'{end_date}T23:59:59-14:00'
 
     location_ids = [location_id] if location_id else None
     result = square.search_scheduled_shifts(
@@ -1291,13 +1299,30 @@ def history():
     return render_template('history.html', uploads=uploads)
 
 
+def _load_owned_upload(upload_id):
+    """Fetch an upload the current user is allowed to see.
+
+    Returns (upload, None) on success or (None, (response, status)) if the
+    upload is missing or belongs to another (non-admin) user. Non-admins can
+    only touch uploads they created; admins can see all. This keeps one user's
+    staff PII (and their failed rows) from being read, exported, or re-published
+    by another logged-in user.
+    """
+    upload = db.get_upload(upload_id)
+    if not upload:
+        return None, (jsonify({'error': 'Upload not found'}), 404)
+    if not session.get('is_admin') and upload.get('uploaded_by') != session.get('username'):
+        return None, (jsonify({'error': 'Unauthorized'}), 403)
+    return upload, None
+
+
 @app.route('/api/upload/<int:upload_id>', methods=['GET'])
 @login_required
 def get_upload_details(upload_id):
     """Get details of a specific upload (including per-row results)."""
-    upload = db.get_upload(upload_id)
-    if not upload:
-        return jsonify({'error': 'Upload not found'}), 404
+    upload, error = _load_owned_upload(upload_id)
+    if error:
+        return error
 
     return jsonify({
         'upload': upload,
@@ -1310,9 +1335,9 @@ def get_upload_details(upload_id):
 @login_required
 def upload_report(upload_id):
     """Download a per-row CSV report for an upload."""
-    upload = db.get_upload(upload_id)
-    if not upload:
-        return jsonify({'error': 'Upload not found'}), 404
+    upload, error = _load_owned_upload(upload_id)
+    if error:
+        return error
 
     results = db.get_upload_results(upload_id)
     buffer = io.StringIO()
@@ -1340,9 +1365,9 @@ def upload_report(upload_id):
 @login_required
 def retry_failed(upload_id):
     """Re-stage just the failed rows of a previous upload for another attempt."""
-    upload = db.get_upload(upload_id)
-    if not upload:
-        return jsonify({'error': 'Upload not found'}), 404
+    upload, error = _load_owned_upload(upload_id)
+    if error:
+        return error
 
     failed_rows = db.get_failed_rows(upload_id)
     if not failed_rows:
@@ -1594,6 +1619,11 @@ def backup_restore():
     if not session.get('is_admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
+    # A database backup can legitimately be larger than the modest cap applied
+    # to CSV/xlsx uploads, so lift the per-request limit here — otherwise a
+    # backup you could download might be too big to restore.
+    request.max_content_length = None
+
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     file = request.files['file']
@@ -1718,6 +1748,17 @@ def _configure_scheduler():
     """Register background jobs based on env config. Off by default."""
     sync_hours = float(os.environ.get('AUTO_SYNC_HOURS', 0) or 0)
     backup_hours = float(os.environ.get('AUTO_BACKUP_HOURS', 0) or 0)
+    if (sync_hours > 0 or backup_hours > 0):
+        try:
+            workers = int(os.environ.get('GUNICORN_WORKERS', '1') or '1')
+        except ValueError:
+            workers = 1
+        if workers > 1:
+            log.warning(
+                'Auto sync/backup jobs are enabled but GUNICORN_WORKERS=%d: each '
+                'worker runs its own scheduler, so jobs will run %d times. Set '
+                'GUNICORN_WORKERS=1 to run them once.', workers, workers,
+            )
     if sync_hours > 0:
         scheduler.add_job('master-data-sync', sync_hours * 3600, _scheduled_sync)
         log.info('auto master-data sync enabled every %.1fh', sync_hours)

@@ -47,7 +47,10 @@
             </div>
             <div class="nav-user">
                 <a href="{{ url_for('account') }}">{{ session.get('username') }}</a>
-                <a class="logout" href="{{ url_for('logout') }}">Logout</a>
+                <form method="POST" action="{{ url_for('logout') }}" class="logout-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="logout">Logout</button>
+                </form>
             </div>
         </div>
     </nav>

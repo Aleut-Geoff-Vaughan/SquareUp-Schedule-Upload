@@ -153,6 +153,10 @@ class Database:
         if current < 1:
             # v1: per-location IANA timezone name (DST-aware), alongside the
             # legacy fixed-offset `timezone` column which stays as a fallback.
+            # Also (defensively) add the base `timezone` column for databases
+            # old enough to predate it, so later INSERTs don't fail.
+            if not self._has_column(cursor, 'locations', 'timezone'):
+                cursor.execute("ALTER TABLE locations ADD COLUMN timezone TEXT DEFAULT '-04:00'")
             if not self._has_column(cursor, 'locations', 'timezone_name'):
                 cursor.execute("ALTER TABLE locations ADD COLUMN timezone_name TEXT")
 
@@ -182,19 +186,18 @@ class Database:
             )
 
         if current < 3:
-            # v3: backfill legacy fixed offsets to IANA names where the offset
-            # is unambiguous, so existing locations become DST-aware.
+            # v3: backfill legacy fixed offsets to IANA names ONLY where the
+            # offset is unambiguous. Most US offsets are shared by two zones
+            # (e.g. -05:00 is Eastern EST or Central CDT), and guessing wrong
+            # would shift a location by an hour across DST — so those are left
+            # NULL and keep using their stored fixed offset until an admin
+            # re-syncs from Square or picks a zone. Only '-04:00' (the app's
+            # historical Eastern default, applied to every synced/added
+            # location) and '+00:00' (UTC) are safe to map.
             offset_to_iana = {
-                '-05:00': 'America/Chicago',
-                '-06:00': 'America/Denver',
-                '-07:00': 'America/Los_Angeles',
-                '-08:00': 'America/Anchorage',
-                '-09:00': 'America/Anchorage',
-                '-10:00': 'Pacific/Honolulu',
+                '-04:00': 'America/New_York',
                 '+00:00': 'UTC',
             }
-            # -04:00 is the app's historical Eastern default; map it to Eastern.
-            offset_to_iana['-04:00'] = 'America/New_York'
             for row in cursor.execute(
                 'SELECT id, timezone, timezone_name FROM locations'
             ).fetchall():
@@ -620,3 +623,23 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM pending_uploads WHERE user_id = ?', (user_id,))
+
+    def claim_pending_upload(self, user_id):
+        """Atomically read AND remove a user's staged upload.
+
+        Returns the rows to exactly one caller; a concurrent/duplicate call
+        gets None. SQLite serializes the DELETE writes, so only the caller
+        whose DELETE actually removes the row (rowcount == 1) wins — this is
+        what prevents a double-click from publishing the same batch twice,
+        even across processes/threads.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT csv_data FROM pending_uploads WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            cursor.execute('DELETE FROM pending_uploads WHERE user_id = ?', (user_id,))
+            if cursor.rowcount != 1:
+                return None
+            return json.loads(row[0])
