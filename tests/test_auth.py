@@ -23,8 +23,14 @@ def test_dashboard_renders_when_logged_in(logged_in):
 
 
 def test_logout_clears_session(logged_in):
-    resp = logged_in.get("/logout")
+    # Logout is POST-only (CSRF-protected) so it can't be triggered cross-site.
+    resp = logged_in.post("/logout")
     assert resp.status_code == 302
     follow = logged_in.get("/")
     assert follow.status_code == 302
     assert "/login" in follow.headers["Location"]
+
+
+def test_logout_get_not_allowed(logged_in):
+    resp = logged_in.get("/logout")
+    assert resp.status_code == 405

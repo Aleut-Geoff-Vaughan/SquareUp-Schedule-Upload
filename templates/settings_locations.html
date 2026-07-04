@@ -3,11 +3,11 @@
 
 {% block content %}
 <h1>Locations</h1>
-<p class="subtle">Map your internal location names to Square Location IDs. Each location has a timezone used as the fallback when the schedule CSV omits the timezone_offset column.</p>
+<p class="subtle">Map your internal location names to Square Location IDs. Each location's timezone is used (DST-aware) when the schedule CSV omits the timezone_offset column.</p>
 
 <section class="card">
     <h2>Sync from Square</h2>
-    <p class="subtle">Pulls all locations from Square and <strong>replaces</strong> this list. All synced locations default to Eastern Time; edit individual rows to change.</p>
+    <p class="subtle">Pulls all locations from Square and <strong>replaces</strong> this list, importing each location's real timezone so shifts stay correct across daylight-saving changes.</p>
     <button id="sync-btn" type="button" class="btn primary">Sync from Square</button>
     <div id="sync-status" class="status hidden"></div>
 </section>
@@ -17,9 +17,9 @@
     <form id="add-form" class="form-row">
         <input type="text" id="name" placeholder="Location name" required>
         <input type="text" id="square_id" placeholder="Square Location ID" required>
-        <select id="timezone">
+        <select id="timezone_name">
             {% for tz in timezone_choices %}
-            <option value="{{ tz.value }}" {% if tz.value == '-04:00' %}selected{% endif %}>{{ tz.label }}</option>
+            <option value="{{ tz.value }}" {% if tz.value == 'America/New_York' %}selected{% endif %}>{{ tz.label }}</option>
             {% endfor %}
         </select>
         <button type="submit" class="btn primary">Add</button>
@@ -43,7 +43,7 @@
                     <td>
                         <select class="tz-select" data-id="{{ l.id }}" data-name="{{ l.name }}" data-sqid="{{ l.square_location_id }}">
                             {% for tz in timezone_choices %}
-                            <option value="{{ tz.value }}" {% if tz.value == l.timezone %}selected{% endif %}>{{ tz.label }}</option>
+                            <option value="{{ tz.value }}" {% if tz.value == (l.timezone_name or 'America/New_York') %}selected{% endif %}>{{ tz.label }}</option>
                             {% endfor %}
                         </select>
                     </td>
@@ -104,11 +104,11 @@ document.querySelectorAll('.tz-select').forEach((sel) => {
         const id = parseInt(sel.getAttribute('data-id'), 10);
         const name = sel.getAttribute('data-name');
         const sqid = sel.getAttribute('data-sqid');
-        const tz = sel.value;
+        const tzName = sel.value;
         const res = await fetch('{{ url_for("locations") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'update', id, name, square_location_id: sqid, timezone: tz })
+            body: JSON.stringify({ action: 'update', id, name, square_location_id: sqid, timezone_name: tzName })
         });
         const data = await res.json();
         if (!data.success) {

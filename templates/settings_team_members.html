@@ -6,8 +6,15 @@
 <p class="subtle">Map employee names to Square Team Member IDs. Team member is optional for open shifts.</p>
 
 <section class="card">
-    <h2>Import from Square export</h2>
-    <p class="subtle">Upload the Team Members CSV exported from Square. The importer skips Inactive rows, de-duplicates by email, looks up each Square Team Member ID via the Square API, and <strong>replaces</strong> the entire team members list.</p>
+    <h2>Sync from Square</h2>
+    <p class="subtle">Pulls all <strong>active</strong> team members straight from the Square API (no CSV export needed) and <strong>replaces</strong> this list. This is the quickest way to stay current after a hire or departure.</p>
+    <button id="sync-btn" type="button" class="btn primary">Sync from Square</button>
+    <div id="sync-status" class="status hidden"></div>
+</section>
+
+<section class="card">
+    <h2>Import from Square export (CSV)</h2>
+    <p class="subtle">Alternative to the direct sync: upload the Team Members CSV exported from Square. Skips Inactive rows, de-duplicates by email, looks up each Square Team Member ID via the API, and <strong>replaces</strong> the entire list.</p>
     <p class="subtle">Required columns: First Name, Last Name, Email, Status.</p>
 
     <form id="import-form" enctype="multipart/form-data">
@@ -63,6 +70,32 @@
 </script>
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 <script>
+document.getElementById('sync-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('sync-btn');
+    const statusEl = document.getElementById('sync-status');
+    if (!confirm('This will REPLACE all team members with active members from Square. Continue?')) return;
+    btn.disabled = true;
+    statusEl.textContent = 'Syncing active team members from Square...';
+    statusEl.className = 'status';
+    try {
+        const res = await fetch('{{ url_for("team_members_sync") }}', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            statusEl.textContent = data.error || 'Sync failed';
+            statusEl.className = 'status error';
+            btn.disabled = false;
+            return;
+        }
+        statusEl.textContent = data.message + ' Reloading...';
+        statusEl.className = 'status success';
+        setTimeout(() => { window.location.reload(); }, 1200);
+    } catch (err) {
+        statusEl.textContent = 'Sync failed: ' + err.message;
+        statusEl.className = 'status error';
+        btn.disabled = false;
+    }
+});
+
 document.getElementById('import-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fileInput = document.getElementById('import-file');

@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}Square Schedule Manager{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
     {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -44,8 +46,11 @@
                 {% endif %}
             </div>
             <div class="nav-user">
-                <span>{{ session.get('username') }}</span>
-                <a class="logout" href="{{ url_for('logout') }}">Logout</a>
+                <a href="{{ url_for('account') }}">{{ session.get('username') }}</a>
+                <form method="POST" action="{{ url_for('logout') }}" class="logout-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="logout">Logout</button>
+                </form>
             </div>
         </div>
     </nav>

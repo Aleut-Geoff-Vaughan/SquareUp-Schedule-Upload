@@ -6,11 +6,18 @@ Handles all API calls to Square Labor API
 import requests
 import os
 import time
-from datetime import datetime
+import hashlib
+import threading
+from contextlib import contextmanager
 
 
 SANDBOX_HOST = "https://connect.squareupsandbox.com"
 PRODUCTION_HOST = "https://connect.squareup.com"
+
+# Transient statuses worth retrying with backoff.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+BACKOFF_BASE_SECONDS = 0.5
 
 
 def _format_square_error(response):
@@ -69,7 +76,14 @@ def resolve_credentials():
 
 class SquareAPI:
     def __init__(self):
-        creds = resolve_credentials()
+        self._frozen = False
+        # Serializes credential freezes so two concurrent batches (under a
+        # threaded WSGI worker) can't interleave the freeze/restore and leave
+        # one batch running unfrozen against a mid-flight environment flip.
+        self._freeze_lock = threading.RLock()
+        self._apply(resolve_credentials())
+
+    def _apply(self, creds):
         self.environment = creds['environment']
         self.access_token = creds['access_token']
         self.application_id = creds['application_id']
@@ -81,29 +95,105 @@ class SquareAPI:
         }
 
     def _update_token(self):
-        """Refresh creds from environment (handles env var changes at runtime)."""
-        creds = resolve_credentials()
-        self.environment = creds['environment']
-        self.access_token = creds['access_token']
-        self.application_id = creds['application_id']
-        self.base_url = f"{creds['host']}/v2/labor"
-        self.headers['Authorization'] = f'Bearer {self.access_token}'
-    
+        """Refresh creds from environment (handles env var changes at runtime).
+
+        A no-op while credentials are frozen for a batch, so an admin flipping
+        sandbox<->production mid-batch cannot silently reroute the remaining
+        shifts (including to production)."""
+        if self._frozen:
+            return
+        self._apply(resolve_credentials())
+
+    @contextmanager
+    def frozen_credentials(self):
+        """Freeze credentials for the duration of a batch.
+
+        Snapshots the currently-resolved environment/token and pins them so
+        every call in the block targets the same environment even if the
+        global env var changes. Held under a lock so concurrent batches are
+        serialized rather than interleaving their freeze/restore state.
+        """
+        with self._freeze_lock:
+            self._apply(resolve_credentials())
+            previous = self._frozen
+            self._frozen = True
+            try:
+                yield {'environment': self.environment, 'host': self.base_url}
+            finally:
+                self._frozen = previous
+
+    def token_missing(self):
+        return not self.access_token or self.access_token.startswith('YOUR_')
+
+    def _request_with_retry(self, method, url, **kwargs):
+        """Perform a request, retrying transient 429/5xx with exponential
+        backoff (honoring Retry-After when present). Raises the usual
+        requests exceptions for the caller's try/except to handle.
+
+        Dispatches to the module-level requests.post / requests.get so
+        existing call sites and their test mocks keep working.
+        """
+        kwargs.setdefault('timeout', 15)
+        http = requests.post if method.upper() == 'POST' else requests.get
+        last_response = None
+        for attempt in range(MAX_RETRIES + 1):
+            response = http(url, headers=self.headers, **kwargs)
+            status = getattr(response, 'status_code', None)
+            if status not in RETRYABLE_STATUS:
+                return response
+            last_response = response
+            if attempt == MAX_RETRIES:
+                break
+            retry_after = None
+            headers = getattr(response, 'headers', None)
+            if headers is not None:
+                try:
+                    retry_after = headers.get('Retry-After')
+                except (AttributeError, TypeError):
+                    retry_after = None
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except (ValueError, TypeError):
+                    delay = BACKOFF_BASE_SECONDS * (2 ** attempt)
+            else:
+                delay = BACKOFF_BASE_SECONDS * (2 ** attempt)
+            time.sleep(delay)
+        return last_response
+
     def _generate_idempotency_key(self, shift_data):
-        """Generate unique idempotency key"""
-        timestamp = int(time.time() * 1000)
-        date = shift_data['date'].replace('-', '_')
-        name = shift_data['employee_name'].replace(' ', '_')[:10]
-        return f"SCHEDULE_{date}_{name}_{timestamp}"
-    
+        """Deterministic idempotency key derived from the shift's content.
+
+        Because it does NOT include a timestamp, a retry of the *same* shift
+        reuses the same key, so Square recognizes the duplicate and returns
+        the original shift instead of creating a second one. Two genuinely
+        different shifts hash differently.
+        """
+        start_at = self._build_iso8601(
+            shift_data['date'], shift_data['start_time'], shift_data['timezone']
+        )
+        end_at = self._build_iso8601(
+            shift_data['date'], shift_data['end_time'], shift_data['timezone']
+        )
+        fingerprint = '|'.join([
+            self.environment,
+            str(shift_data.get('location_id') or ''),
+            str(shift_data.get('job_id') or ''),
+            str(shift_data.get('team_member_id') or ''),
+            start_at,
+            end_at,
+        ])
+        digest = hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()
+        return f"SCHED_{digest[:48]}"
+
     def _build_iso8601(self, date_str, time_str, tz_offset):
         """Build ISO 8601 timestamp"""
         return f"{date_str}T{time_str}:00{tz_offset}"
-    
+
     def create_shift(self, shift_data):
         """
         Create a draft scheduled shift
-        
+
         Args:
             shift_data: {
                 'location_id': str,
@@ -115,24 +205,19 @@ class SquareAPI:
                 'end_time': str (HH:MM),
                 'timezone': str (e.g., -04:00)
             }
-        
+
         Returns:
-            {
-                'success': bool,
-                'shift_id': str (if successful),
-                'error': str (if failed)
-            }
+            {'success': bool, 'shift_id': str, 'error': str}
         """
         try:
             self._update_token()
-            
-            # Validate token
-            if not self.access_token or self.access_token.startswith('YOUR_'):
+
+            if self.token_missing():
                 return {
                     'success': False,
                     'error': 'Square API token not configured. Please set SQUARE_ACCESS_TOKEN.'
                 }
-            
+
             # Build request. Only include team_member_id when we actually have one;
             # Square's production API rejects an explicit null with "Field must not be blank".
             draft_details = {
@@ -161,12 +246,11 @@ class SquareAPI:
                 }
             }
 
-            # Make request
-            response = requests.post(
+            response = self._request_with_retry(
+                'POST',
                 f'{self.base_url}/scheduled-shifts',
-                headers=self.headers,
                 json=request_body,
-                timeout=10
+                timeout=10,
             )
 
             if response.ok:
@@ -176,42 +260,35 @@ class SquareAPI:
                     'shift_id': data['scheduled_shift']['id']
                 }
             else:
-                error_msg = _format_square_error(response)
                 return {
                     'success': False,
-                    'error': error_msg,
+                    'error': _format_square_error(response),
                 }
-        
+
         except requests.exceptions.Timeout:
             return {'success': False, 'error': 'API request timed out'}
         except requests.exceptions.ConnectionError:
             return {'success': False, 'error': 'Connection error. Check your internet connection.'}
         except Exception as e:
             return {'success': False, 'error': f"Unexpected error: {str(e)}"}
-    
+
     def publish_shift(self, shift_id):
         """
         Publish a draft shift to make it live
-        
-        Args:
-            shift_id: The ID of the draft shift
-        
+
         Returns:
-            {
-                'success': bool,
-                'error': str (if failed)
-            }
+            {'success': bool, 'error': str}
         """
         try:
             self._update_token()
-            
-            response = requests.post(
+
+            response = self._request_with_retry(
+                'POST',
                 f'{self.base_url}/scheduled-shifts/{shift_id}/publish',
-                headers=self.headers,
                 json={},
-                timeout=10
+                timeout=10,
             )
-            
+
             if response.ok:
                 return {'success': True}
             else:
@@ -223,58 +300,40 @@ class SquareAPI:
             return {'success': False, 'error': 'Connection error'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
-    
+
     def create_and_publish_shift(self, shift_data):
         """
-        Create and immediately publish a shift (atomic operation from user perspective)
-        
+        Create and immediately publish a shift.
+
         Returns:
-            {
-                'success': bool,
-                'shift_id': str (if successful),
-                'error': str (if failed),
-                'step': 'CREATE' or 'PUBLISH' (if failed)
-            }
+            {'success': bool, 'shift_id': str, 'error': str, 'step': 'CREATE'|'PUBLISH'}
+
+        On a publish failure the created draft's id is returned under
+        'shift_id' so the caller can record the orphaned draft rather than
+        losing track of it.
         """
-        # Step 1: Create
         create_result = self.create_shift(shift_data)
         if not create_result['success']:
-            return {
-                **create_result,
-                'step': 'CREATE'
-            }
-        
+            return {**create_result, 'step': 'CREATE'}
+
         shift_id = create_result['shift_id']
-        
-        # Step 2: Publish
+
         publish_result = self.publish_shift(shift_id)
         if not publish_result['success']:
-            return {
-                **publish_result,
-                'shift_id': shift_id,
-                'step': 'PUBLISH'
-            }
-        
-        return {
-            'success': True,
-            'shift_id': shift_id
-        }
-    
+            return {**publish_result, 'shift_id': shift_id, 'step': 'PUBLISH'}
+
+        return {'success': True, 'shift_id': shift_id}
+
     def search_scheduled_shifts(self, location_ids=None, start_at=None, end_at=None):
         """
         Search scheduled shifts via POST /v2/labor/scheduled-shifts/search.
 
-        Args:
-            location_ids: optional list of Square location IDs to filter to.
-            start_at: ISO 8601 start of the date range (e.g. '2026-05-25T00:00:00Z').
-            end_at: ISO 8601 end of the date range.
-
         Returns:
-            {'success': bool, 'scheduled_shifts': list, 'error': str (if failed)}
+            {'success': bool, 'scheduled_shifts': list, 'error': str}
         """
         try:
             self._update_token()
-            if not self.access_token or self.access_token.startswith('YOUR_'):
+            if self.token_missing():
                 return {'success': False, 'error': 'Square API token not configured.'}
 
             url = f'{self.base_url}/scheduled-shifts/search'
@@ -295,7 +354,7 @@ class SquareAPI:
                 if cursor:
                     body['cursor'] = cursor
 
-                response = requests.post(url, headers=self.headers, json=body, timeout=15)
+                response = self._request_with_retry('POST', url, json=body, timeout=15)
                 if not response.ok:
                     return {'success': False, 'error': _format_square_error(response)}
 
@@ -314,21 +373,20 @@ class SquareAPI:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-
     def list_locations(self):
         """
         List all locations from Square via GET /v2/locations.
 
         Returns:
-            {'success': bool, 'locations': list, 'error': str (if failed)}
+            {'success': bool, 'locations': list, 'error': str}
         """
         try:
             self._update_token()
-            if not self.access_token or self.access_token.startswith('YOUR_'):
+            if self.token_missing():
                 return {'success': False, 'error': 'Square API token not configured.'}
 
             url = self.base_url.replace('/v2/labor', '/v2/locations')
-            response = requests.get(url, headers=self.headers, timeout=15)
+            response = self._request_with_retry('GET', url, timeout=15)
             if not response.ok:
                 return {'success': False, 'error': _format_square_error(response)}
 
@@ -350,11 +408,11 @@ class SquareAPI:
         GET /v2/team-members/jobs.
 
         Returns:
-            {'success': bool, 'jobs': list, 'error': str (if failed)}
+            {'success': bool, 'jobs': list, 'error': str}
         """
         try:
             self._update_token()
-            if not self.access_token or self.access_token.startswith('YOUR_'):
+            if self.token_missing():
                 return {'success': False, 'error': 'Square API token not configured.'}
 
             url = self.base_url.replace('/v2/labor', '/v2/team-members/jobs')
@@ -364,7 +422,7 @@ class SquareAPI:
                 params = {}
                 if cursor:
                     params['cursor'] = cursor
-                response = requests.get(url, headers=self.headers, params=params, timeout=15)
+                response = self._request_with_retry('GET', url, params=params, timeout=15)
                 if not response.ok:
                     return {'success': False, 'error': _format_square_error(response)}
 
@@ -391,11 +449,11 @@ class SquareAPI:
             status: 'ACTIVE', 'INACTIVE', or None for all.
 
         Returns:
-            {'success': bool, 'team_members': list, 'error': str (if failed)}
+            {'success': bool, 'team_members': list, 'error': str}
         """
         try:
             self._update_token()
-            if not self.access_token or self.access_token.startswith('YOUR_'):
+            if self.token_missing():
                 return {'success': False, 'error': 'Square API token not configured.'}
 
             url = self.base_url.replace('/v2/labor', '/v2/team-members/search')
@@ -408,7 +466,7 @@ class SquareAPI:
                 if cursor:
                     body['cursor'] = cursor
 
-                response = requests.post(url, headers=self.headers, json=body, timeout=15)
+                response = self._request_with_retry('POST', url, json=body, timeout=15)
                 if not response.ok:
                     return {'success': False, 'error': _format_square_error(response)}
 
@@ -429,43 +487,24 @@ class SquareAPI:
 
     def test_connection(self):
         """
-        Test if API token is valid by making a test request
-        
+        Test if API token is valid by making a test request.
+
         Returns:
-            {
-                'success': bool,
-                'message': str
-            }
+            {'success': bool, 'message': str}
         """
         try:
             self._update_token()
-            
+
             if not self.access_token:
-                return {
-                    'success': False,
-                    'message': 'No API token configured'
-                }
-            
-            # Try to list locations (simple test)
-            response = requests.get(
-                f'{self.base_url}/../locations',  # Use Locations API as test
-                headers=self.headers,
-                timeout=5
-            )
-            
+                return {'success': False, 'message': 'No API token configured'}
+
+            url = self.base_url.replace('/v2/labor', '/v2/locations')
+            response = self._request_with_retry('GET', url, timeout=5)
+
             if response.status_code == 200:
-                return {
-                    'success': True,
-                    'message': 'API connection successful'
-                }
+                return {'success': True, 'message': 'API connection successful'}
             else:
-                return {
-                    'success': False,
-                    'message': f'API returned status {response.status_code}'
-                }
-        
+                return {'success': False, 'message': f'API returned status {response.status_code}'}
+
         except Exception as e:
-            return {
-                'success': False,
-                'message': str(e)
-            }
+            return {'success': False, 'message': str(e)}

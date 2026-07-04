@@ -9,13 +9,13 @@ SAMPLE_CSV = (
 )
 
 
-def _seed_lookups(app_module):
+def _seed_lookups(app_module, include_john=True):
     app_module.db.add_location("Main Street", "L_MAIN")
     app_module.db.add_job("Barista", "J_BAR")
     app_module.db.add_job("Manager", "J_MGR")
     app_module.db.add_team_member("Jane Doe", "T_JANE")
-    # John Smith intentionally NOT added — to exercise the "unknown team member" case
-    # (open shifts are allowed but a named team member with no mapping is still ok per app logic)
+    if include_john:
+        app_module.db.add_team_member("John Smith", "T_JOHN")
 
 
 def _upload_sample(client):
@@ -67,11 +67,39 @@ def test_full_upload_and_verify_flow(logged_in):
     assert preview.status_code == 200
     data = preview.get_json()
     assert data["total_rows"] == 3
-    # Jane Doe + Main Street + Barista all map; John Smith has no team_member mapping
-    # but app logic treats unknown team member as an open shift (valid).
-    # Both first rows should be valid; the row with empty employee_name is also valid
-    # because team_member is optional.
+    # Jane Doe + John Smith both map to team members; the blank-employee row is
+    # a valid open shift. All three are valid.
     assert data["valid_rows"] == 3
+
+
+def test_named_but_unmatched_employee_is_invalid(logged_in):
+    """A named employee that doesn't match any team member must be flagged
+    invalid, NOT silently published as an open shift (regression guard)."""
+    _seed_lookups(logged_in.application_module, include_john=False)
+    assert _upload_sample(logged_in).status_code == 200
+    data = logged_in.get("/api/verify-preview").get_json()
+    # Jane + open shift are valid; John Smith (no mapping) is invalid.
+    assert data["valid_rows"] == 2
+    john = next(r for r in data["rows"] if r["employee_name"] == "John Smith")
+    assert john["is_valid"] is False
+    assert any("John Smith" in e for e in john["errors"])
+
+
+def test_invalid_rows_are_not_sent_to_square(logged_in, monkeypatch):
+    """process-schedules must skip invalid rows entirely rather than publish
+    them (invalid = missing lookup or unmatched named employee)."""
+    _seed_lookups(logged_in.application_module, include_john=False)
+    calls = []
+    monkeypatch.setattr(
+        logged_in.application_module.square, "create_and_publish_shift",
+        lambda shift_data: calls.append(shift_data) or {"success": True, "shift_id": f"S{len(calls)}"},
+    )
+    assert _upload_sample(logged_in).status_code == 200
+    body = logged_in.post("/api/process-schedules", json={"approve": True}).get_json()
+    # Only Jane + the open shift are published; John Smith is recorded as an error.
+    assert body["success_count"] == 2
+    assert body["error_count"] == 1
+    assert len(calls) == 2
 
 
 def test_verify_preview_flags_missing_lookups(logged_in):

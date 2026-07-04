@@ -8,6 +8,7 @@
 <section class="card">
     <h2>Download backup</h2>
     <p class="subtle">Saves a consistent snapshot of <code>schedules.db</code> to your computer. Includes users, locations, jobs, team members, upload history, and settings.</p>
+    <p class="subtle"><strong>Handle as a secret:</strong> a backup contains password hashes and any Square access token saved via the settings UI. Store it somewhere access-controlled.</p>
     <a class="btn primary" href="{{ url_for('backup_download') }}">Download backup</a>
 </section>
 
@@ -57,7 +58,8 @@ document.getElementById('restore-form').addEventListener('submit', async (e) => 
         }
         statusEl.textContent = data.message + ' Redirecting to login...';
         statusEl.className = 'status success';
-        setTimeout(() => { window.location.href = '{{ url_for("logout") }}'; }, 1500);
+        // The restored DB replaces the session's user; go straight to login.
+        setTimeout(() => { window.location.href = '{{ url_for("login") }}'; }, 1500);
     } catch (err) {
         statusEl.textContent = 'Restore failed: ' + err.message;
         statusEl.className = 'status error';

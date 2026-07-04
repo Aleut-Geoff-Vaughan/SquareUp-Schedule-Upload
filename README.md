@@ -56,17 +56,20 @@ cd C:\SquareScheduleManager
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Set environment variable for your Square token
+# 3. Set a strong session secret (REQUIRED; must be >= 32 chars) and token
+set SECRET_KEY=%RANDOM%   # on Linux/macOS: export SECRET_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")
 set SQUARE_ACCESS_TOKEN=your_token_here
 
-# 4. Run the application
+# 4. Run the application (dev). For production use gunicorn (see Docker below).
 python app.py
 ```
 
 **Access the application:**
 - Open browser to: http://localhost:5000
-- Login: admin / admin123
-- **⚠️ Change password immediately!**
+- On first run, an initial `admin` account is created. Its password comes from
+  `INITIAL_ADMIN_PASSWORD` if set; otherwise a random password is **printed once
+  to the logs**. There is no shipped default password.
+- **⚠️ Log in and change the password immediately (top-right → your username → Account).**
 
 ### Option 2: Docker
 
@@ -90,6 +93,12 @@ docker run -d --name square-schedule-manager \
   -v $(pwd)/data:/app/data \
   geoffvaughan/square-schedule-upload:latest
 ```
+
+`SECRET_KEY` is **required** and must be a strong value of at least 32
+characters — the app refuses to start otherwise (no insecure default). Generate
+one with `python -c "import secrets; print(secrets.token_hex(32))"`. The
+container serves via **gunicorn** (a production WSGI server), runs as a
+non-root user, and exposes an unauthenticated `/healthz` liveness endpoint.
 
 From Docker Desktop's UI: search for `geoffvaughan/square-schedule-upload`, click **Pull**, then **Run** with the env vars above.
 
@@ -276,12 +285,13 @@ docker ps
 
 ### Initial Setup
 
-#### 1. Change Default Password
+#### 1. Set Your Password
 ```
-1. Login with admin / admin123
-2. Go to Admin → Users
-3. Delete default admin user
-4. Create new user with strong password
+1. Log in as the initial admin (password from INITIAL_ADMIN_PASSWORD, or the
+   random one printed once to the logs on first start).
+2. Top-right → your username → Account → Change password.
+3. Optionally add more users in Admin → Users (admins can also reset a user's
+   password there). The last remaining admin cannot be deleted.
 ```
 
 #### 2. Configure Square API Token
